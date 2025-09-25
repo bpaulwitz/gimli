@@ -239,6 +239,36 @@ protected:
     Mesh                     offsetMesh_;
 };
 
+/*! New Class derived from standard travel time modelling.
+    Implements travel time modeling for Tilted Transversally Isotropic (TTI) settings using
+    the Thomsen parameters epsilon and delta as well as the orientation of the symmetry axis.
+ */
+class DLLEXPORT TravelTimeDijkstraModellingTTI: public TravelTimeDijkstraModelling{
+public: 
+    // constructor
+    TravelTimeDijkstraModellingTTI(Mesh & mesh, DataContainer & dataContainer, bool verbose);
+
+    // destructor
+    virtual ~TravelTimeDijkstraModellingTTI();
+
+    // response function. Takes TTI velocity model and computes slowness to use base response.
+    virtual RVector response(const RVector & velP, const RVector & epsilon,
+        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+
+    // computes the Jacobian
+    virtual void createJacobian(const RVector & velP, const RVector & epsilon,
+        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+
+    Graph createGraph(const RVector & velP, const RVector & epsilon,
+        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) const;
+
+protected:
+    // computes the derivative of the loss with respect to the TTI velocity model parameters
+    virtual inline void velocityModelGradients(const double time, double & dTdVP, double & dTdEps, double & dTdDel,
+        double & dTdSymmX, double & dTdSymmY, double & dTdSymmZ);
+
+}
+
 
 } //namespace GIMLI
 

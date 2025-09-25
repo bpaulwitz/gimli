@@ -683,4 +683,330 @@ void TTModellingWithOffset::createJacobian(const RVector & model){
     }
 }
 
+TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(Mesh & mesh, DataContainer & dataContainer, bool verbose) :
+    TravelTimeDijkstraModelling(mesh, dataContainer, verbose) {
+}
+
+TravelTimeDijkstraModellingTTI::~TravelTimeDijkstraModellingTTI() { }
+
+
+RVector TravelTimeDijkstraModellingTTI::response(const RVector & velP, const RVector & epsilon,
+    const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+
+    if (background_ < TOLERANCE) {
+        std::cout << "Background: " << background_ << "->" << 1e16 << std::endl;
+        background_ = 1e16;
+    }
+
+    RVector velPerCell(this->createMappedModel(velP, background_));
+    RVector epsPerCell(this->createMappedModel(epsilon, background_));
+    RVector delPerCell(this->createMappedModel(delta, background_));
+    RVector symmXPerCell(this->createMappedModel(symmX, background_));
+    RVector symmYPerCell(this->createMappedModel(symmY, background_));
+    RVector symmZPerCell(this->createMappedModel(symmZ, background_));
+
+    dijkstra_.setGraph(createGraph(velPerCell, epsPerCell, delPerCell, symmXPerCell, symmYPerCell, symmZPerCell));
+
+    Index nShots = shotNodeId_.size();
+    Index nRecei = receNodeId_.size();
+    RMatrix dMap(nShots, nRecei);
+
+    Index nThreads = this->threadCount();
+
+    distributeCalc(CreateDijkstraDistMT(dMap, this->dijkstra_,
+                                       this->shotNodeId_,
+                                       this->receNodeId_, this->verbose()),
+                   nShots, nThreads, this->verbose());
+
+    Index s = 0, g = 0;
+
+    Index nData = dataContainer_->size();
+    RVector resp(nData);
+
+    for (Index dataIdx = 0; dataIdx < nData; dataIdx ++) {
+        s = shotsInv_.at(Index((*dataContainer_)("s")[dataIdx]));
+        g = receiInv_.at(Index((*dataContainer_)("g")[dataIdx]));
+        resp[dataIdx] = dMap[s][g];
+    }
+    return  resp;
+}
+
+// TODO rewrite this.
+void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const RVector & epsilon,
+    const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+
+    // variables for forward modeling
+    double theta, VP, lambdaAc, substA, substB, substC, sinTheta, cosTheta, sinThetaSq, cosThetaSq;
+
+    // derivatives of the travel time with respect to slowness, P-wave velocity, pseudo-acoustic factor, epsilon, delta
+    // and the x-, y- and z-component of the orientation of the symmetry axis
+    double dTdS, dTdVP, dTdL, dTdV0, dTdE, dTdD, dTdOx, dTdOy, dTdOz;
+
+    if (min(this->mesh_->cellMarkers()) < 0){
+        log(Warning, "There are cells with marker -1. "
+                "Did you define a boundary region? (This is not needed).");
+    }
+    Stopwatch swatch(true);
+    if (background_ < TOLERANCE) {
+        std::cout << "Background: " << background_ << " ->" << 1e16 << std::endl;
+        background_ = 1e16;
+    }
+
+    RVector velPerCell(this->createMappedModel(velP0, background_));
+    RVector epsPerCell(this->createMappedModel(epsilon, background_));
+    RVector delPerCell(this->createMappedModel(delta, background_));
+    RVector symmXPerCell(this->createMappedModel(symmX, background_));
+    RVector symmYPerCell(this->createMappedModel(symmY, background_));
+    RVector symmZPerCell(this->createMappedModel(symmZ, background_));
+
+    dijkstra_.setGraph(createGraph(velPerCell, epsPerCell, delPerCell, symmXPerCell, symmYPerCell, symmZPerCell));
+
+    Index nShots = shotNodeId_.size();
+    Index nRecei = receNodeId_.size();
+    Index nData = dataContainer_->size();
+    Index nModel = slowness.size();
+
+    jacobian.clear();
+    jacobian.setRows(nData);
+    jacobian.setCols(nModel * 6);
+
+    //** for each shot: vector<  way(shot->geoph) >;
+    wayMatrix_.clear();
+    wayMatrix_.resize(nShots);
+    for (auto & w: wayMatrix_) w.resize(nRecei);
+
+    Index nThreads = this->threadCount();
+
+    if (useOMP()){
+        __MS("DEBUG: OMP for fill Way Matrix")
+        fillWayMatrix(wayMatrix_, dijkstra_, shotNodeId_, receNodeId_);
+    } else {
+        distributeCalc(CreateDijkstraRowMT(wayMatrix_, dijkstra_,
+                                       shotNodeId_, receNodeId_, this->verbose()),
+                    nShots, nThreads, this->verbose());
+    }
+
+    if (this->verbose()){
+        std::cout << "/" << swatch.duration(true);
+    }
+    
+    for (Index dataIdx = 0; dataIdx < nData; dataIdx ++) {
+        Index s = shotsInv_.at(Index((*dataContainer_)("s")[dataIdx]));
+        Index g = receiInv_.at(Index((*dataContainer_)("g")[dataIdx]));
+
+        std::vector < Cell * > neighborCells;
+        std::vector < Index > neighborCellIDs;
+
+        for (Index i = 0; i < wayMatrix_[s][g].size()-1; i ++) {
+            neighborCells.clear();
+
+            Index aId = wayMatrix_[s][g][i];
+            Index bId = wayMatrix_[s][g][i + 1];
+
+            const GraphDistInfo & way = dijkstra_.graphInfo(aId, bId);
+
+            double edgeLength = way.dist();
+
+            double minSlow = 9e99;
+
+            for (const auto &iCD : way.cellIDs()){
+                minSlow = min(minSlow, slowPerCell[iCD]);
+            }
+
+            for (const auto &iCD : way.cellIDs()){
+                if (std::fabs(slowPerCell[iCD] - minSlow) < 1e-4){
+                    Cell *c = & mesh_->cell(iCD);
+                    neighborCells.push_back(c);
+                    neighborCellIDs.push_back(iCD);
+                }
+            }
+
+            for (int i = 0; i < neighborCells.size(); i++) {
+                const auto c = neighborCells[i];
+                const auto cellID = neighborCellIDs[i];
+
+                // get TTI parameters for current cell
+                double currentVel0 = velPerCell[cellID];
+                double currentEpsilon = epsPerCell[cellID];
+                double currentDelta = delPerCell[cellID];
+                double currentSymmX = symmXPerCell[cellID];
+                double currentSymmY = symmYPerCell[cellID];
+                double currentSymmZ = symmZPerCell[cellID];
+
+                // compute theta
+                RVector3 nodeA_pos = mesh_->node(aId).pos();
+                RVector3 nodeB_pos = mesh_->node(bId).pos();
+
+                // compute vector between nodes
+                RVector3 vecPath = nodeB_pos - nodeA_pos;
+
+                // compute phase angle theta
+                double dot = currentSymmX * vecPath.x() + currentSymmY * vecPath.y() + currentSymmZ * vecPath.z();
+                double symmLen = std::sqrt(currentSymmX * currentSymmX + currentSymmY * currentSymmY + currentSymmZ * currentSymmZ);
+                double vecPathLen = std::sqrt(vecPath.x() * vecPath.x() + vecPath.y() * vecPath.y() + vecPath.z() * vecPath.z());
+                double divisor = symmLen * vecPathLen;
+                double cosTheta = dot / divisor;
+                
+                // Avoid division by zero if symmLen or vecPathLen is zero
+                if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
+                    theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+                } else {
+                    theta = std::acos(dot / (divisor));
+                }
+
+                sinTheta = std::sin(theta);
+                //cosTheta = std::cos(theta);
+                sinThetaSq = sinTheta * sinTheta;
+                cosThetaSq = cosTheta * cosTheta;
+
+                substA = 0.5 + currentEpsilon * sinThetaSq;
+                substB = 2. * sinThetaSq * cosThetaSq;
+                substC = std::sqrt(substA * substA - substB * currentDelta + substB * currentDelta);
+
+                lambdaAc = std::sqrt(substA + substC);
+
+                double currentVelP = currentVel0 * lambdaAc;
+
+                // partial derivatives of velocity model parameters
+                dTdS = edgeLength / neighborCells.size();
+                dTdVP = -dTdS / (currentVelP * currentVelP);
+                dTdL = dTdVP * currentVel0;
+                double dTdc = dTdL / (2. * std::sqrt(substA + substC));
+                double dTdTheta = dTdc * (
+                    (2. * (substA * currentEpsilon * sinTheta * cosTheta + (currentDelta - currentEpsilon) * (sinTheta * cosTheta * cosThetaSq - sinTheta * sinThetaSq * cosTheta)))
+                    /
+                    (std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon)))
+                    );
+
+
+                dTdV0 = dTdVP * lambdaAc;
+                dTdE = dTdc * ((2. * substA * sinThetaSq - substB) /
+                               (2. * std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon))));
+                dTdD = dTdc * ((substB) /
+                               (2. * std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon))));
+                dTdOx = dTdTheta * 
+                    (
+                        (currentSymmX * dot * (vecPathLen / symmLen) - vecPath.x() * divisor)
+                        /
+                        (divisor * divisor * std::sqrt(1. - cosThetaSq))
+                    );
+                dTdOy = dTdTheta * 
+                    (
+                        (currentSymmY * dot * (vecPathLen / symmLen) - vecPath.y() * divisor)
+                        /
+                        (divisor * divisor * std::sqrt(1. - cosThetaSq))
+                    );
+                dTdOz = dTdTheta * 
+                    (
+                        (currentSymmZ * dot * (vecPathLen / symmLen) - vecPath.z() * divisor)
+                        /
+                        (divisor * divisor * std::sqrt(1. - cosThetaSq))
+                    );
+
+                // entry for P-wave velocity
+                jacobian[dataIdx][c->marker()] += dTdV0;
+
+                // entry for epsilon
+                jacobian[dataIdx][c->marker() + nModel] += dTdE;
+
+                // entry for delta
+                jacobian[dataIdx][c->marker() + 2 * nModel] += dTdD;
+
+                // entry for x component of symmetry axis orientation
+                jacobian[dataIdx][c->marker() + 3 * nModel] += dTdOx;
+
+                // entry for y component of symmetry axis orientation
+                jacobian[dataIdx][c->marker() + 4 * nModel] += dTdOy;
+
+                // entry for z component of symmetry axis orientation
+                jacobian[dataIdx][c->marker() + 5 * nModel] += dTdOz;
+            }
+        }
+    }
+    if (this->verbose()){
+        std::cout << "/" << swatch.duration(true) << " ";
+        std::cout << std::endl;
+    }
+}
+
+void fillGraph_(Graph & graph, Cell & c, double velP, double epsilon,
+        double delta, double symmX, double symmY, double symmZ){
+
+    // helper variables to compute the slowness
+    double slowness, theta;
+    double subst_a, subst_b, subst_c;
+    double lambdaEll, lambdaEllSq, lambdaAc, vel;
+    double sinThetaSq, cosThetaSq;
+    RVector3 vecPath; // vector between two nodes
+
+    std::vector< Node * > ni(c.nodes());
+
+    for (Index i(0); i < c.boundaryCount(); i++){
+        Boundary *b = c.boundary(i);
+        if (b){
+            for (auto & n : b->secondaryNodes()){
+                ni.push_back(n);
+            }
+        } else {
+            log(Critical, "No boundary found.");
+        }
+    }
+
+    for (auto & n : c.secondaryNodes()){
+        ni.push_back(n);
+    }
+
+    for (Index j = 0; j < ni.size()-1; j ++) {
+        for (Index k = j + 1; k < ni.size(); k ++) {
+            // compute phase angle theta
+            vecPath = ni[k]->pos() - ni[j]->pos();
+            double dot = symmX * vecPath.x() + symmY * vecPath.y() + symmZ * vecPath.z();
+            double symmLen = sqrt(symmX * symmX + symmY * symmY + symmZ * symmZ);
+            double vecPathLen = sqrt(vecPath.x() * vecPath.x() + vecPath.y() * vecPath.y() + vecPath.z() * vecPath.z());
+            theta = acos(dot / (symmLen * vecPathLen));
+
+            sinThetaSq = sin(theta) * sin(theta);
+            cosThetaSq = cos(theta) * cos(theta);
+
+            // compute slowness
+            subst_a = 0.5 + epsilon * sinThetaSq;
+            subst_b = 2. * sinThetaSq * cosThetaSq;
+            subst_c = sqrt((subst_a * subst_a) - (subst_b * epsilon) + (subst_b * delta));
+
+            lambdaAc = sqrt(subst_a + subst_c);
+            
+            vel = velP * lambdaAc;
+
+            slowness = 1. / vel;
+
+            fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
+        }
+    }
+}
+
+Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, const RVector & epsPerCell,
+    const RVector & delPerCell, const RVector & symmXPerCell, const RVector & symmYPerCell, const RVector & symmZPerCell) {
+
+    Graph graph;
+    mesh_->createNeighborInfos();
+
+    for (Index i = 0; i < mesh_->cellCount(); i ++) {
+        Cell & c = mesh_->cell(i);
+        fillGraph_(graph, c, velPerCell[c.id()], epsPerCell[c.id()], delPerCell[c.id()], symmXPerCell[c.id()], 
+                             symmYPerCell[c.id()], symmZPerCell[c.id()]);
+    }
+
+    if (graph.size() < mesh_->nodeCount()){
+        std::cerr << WHERE_AM_I <<
+                " there seems to be unassigned nodes within the mesh. Dijkstra Path will be maybe invalid."
+                 << graph.size() << " < " << mesh_->nodeCount() << std::endl;
+    }
+    return graph;
+}
+
+void velocityModelGradients(const double time, double & dTdVP, double & dTdEps, double & dTdDel,
+        double & dTdSymmX, double & dTdSymmY, double & dTdSymmZ) {
+
+}
+
 } // namespace GIMLI{
