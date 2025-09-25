@@ -256,18 +256,16 @@ public:
         const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 
     // computes the Jacobian
-    virtual void createJacobian(const RVector & velP, const RVector & epsilon,
+    virtual void createJacobian(RSparseMapMatrix & jacobian, const RVector & velP, const RVector & epsilon,
         const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 
-    Graph createGraph(const RVector & velP, const RVector & epsilon,
-        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) const;
+    virtual Graph createGraph(const RVector & velPerCell, const RVector & epsPerCell,
+        const RVector & delPerCell, const RVector & symmXPerCell, const RVector & symmYPerCell, const RVector & symmZPerCell);
+};
 
-protected:
-    // computes the derivative of the loss with respect to the TTI velocity model parameters
-    virtual inline void velocityModelGradients(const double time, double & dTdVP, double & dTdEps, double & dTdDel,
-        double & dTdSymmX, double & dTdSymmY, double & dTdSymmZ);
+double ttiToSlowness(double V0, double epsilon, double delta, double symmX, double symmY, double symmZ,
+        double pathX, double pathY, double pathZ);
 
-}
 
 
 } //namespace GIMLI

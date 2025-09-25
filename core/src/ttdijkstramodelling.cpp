@@ -690,7 +690,7 @@ TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(Mesh & mesh, Data
 TravelTimeDijkstraModellingTTI::~TravelTimeDijkstraModellingTTI() { }
 
 
-RVector TravelTimeDijkstraModellingTTI::response(const RVector & velP, const RVector & epsilon,
+RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVector & epsilon,
     const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
 
     if (background_ < TOLERANCE) {
@@ -698,7 +698,7 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & velP, const RVe
         background_ = 1e16;
     }
 
-    RVector velPerCell(this->createMappedModel(velP, background_));
+    RVector velPerCell(this->createMappedModel(vel0, background_));
     RVector epsPerCell(this->createMappedModel(epsilon, background_));
     RVector delPerCell(this->createMappedModel(delta, background_));
     RVector symmXPerCell(this->createMappedModel(symmX, background_));
@@ -732,7 +732,7 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & velP, const RVe
 }
 
 // TODO rewrite this.
-void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const RVector & epsilon,
+void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian, const RVector & velP0, const RVector & epsilon,
     const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
 
     // variables for forward modeling
@@ -764,7 +764,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const
     Index nShots = shotNodeId_.size();
     Index nRecei = receNodeId_.size();
     Index nData = dataContainer_->size();
-    Index nModel = slowness.size();
+    Index nModel = velP0.size();
 
     jacobian.clear();
     jacobian.setRows(nData);
@@ -796,12 +796,24 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const
 
         std::vector < Cell * > neighborCells;
         std::vector < Index > neighborCellIDs;
+        std::vector < double > wayCellSlowness;
+        std::vector < Index > wayCellIDs;
 
         for (Index i = 0; i < wayMatrix_[s][g].size()-1; i ++) {
             neighborCells.clear();
+            neighborCellIDs.clear();
+            wayCellSlowness.clear();
+            wayCellIDs.clear();
 
             Index aId = wayMatrix_[s][g][i];
             Index bId = wayMatrix_[s][g][i + 1];
+
+            // node positions
+            RVector3 nodeA_pos = mesh_->node(aId).pos();
+            RVector3 nodeB_pos = mesh_->node(bId).pos();
+
+            // compute vector between nodes
+            RVector3 vecPath = nodeB_pos - nodeA_pos;
 
             const GraphDistInfo & way = dijkstra_.graphInfo(aId, bId);
 
@@ -809,19 +821,35 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const
 
             double minSlow = 9e99;
 
-            for (const auto &iCD : way.cellIDs()){
-                minSlow = min(minSlow, slowPerCell[iCD]);
+            auto cellIDs = way.cellIDs();
+            for (const auto &iCD : cellIDs){
+                double cellSlowness = ttiToSlowness(
+                    velPerCell[iCD],
+                    epsPerCell[iCD],
+                    delPerCell[iCD],
+                    symmXPerCell[iCD], 
+                    symmYPerCell[iCD], 
+                    symmZPerCell[iCD], 
+                    vecPath.x(),
+                    vecPath.y(),
+                    vecPath.z());
+                wayCellSlowness.push_back(cellSlowness);
+                wayCellIDs.push_back(iCD);
+
+                minSlow = min(minSlow, cellSlowness);
             }
 
-            for (const auto &iCD : way.cellIDs()){
-                if (std::fabs(slowPerCell[iCD] - minSlow) < 1e-4){
+            for (std::size_t i = 0; i < cellIDs.size(); i++){
+                auto iCD = wayCellIDs[i];
+                double cellSlowness = wayCellSlowness[i];
+                if (std::fabs(cellSlowness- minSlow) < 1e-4){
                     Cell *c = & mesh_->cell(iCD);
                     neighborCells.push_back(c);
                     neighborCellIDs.push_back(iCD);
                 }
             }
 
-            for (int i = 0; i < neighborCells.size(); i++) {
+            for (std::size_t i = 0; i < neighborCells.size(); i++) {
                 const auto c = neighborCells[i];
                 const auto cellID = neighborCellIDs[i];
 
@@ -832,13 +860,6 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const
                 double currentSymmX = symmXPerCell[cellID];
                 double currentSymmY = symmYPerCell[cellID];
                 double currentSymmZ = symmZPerCell[cellID];
-
-                // compute theta
-                RVector3 nodeA_pos = mesh_->node(aId).pos();
-                RVector3 nodeB_pos = mesh_->node(bId).pos();
-
-                // compute vector between nodes
-                RVector3 vecPath = nodeB_pos - nodeA_pos;
 
                 // compute phase angle theta
                 double dot = currentSymmX * vecPath.x() + currentSymmY * vecPath.y() + currentSymmZ * vecPath.z();
@@ -929,7 +950,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const
     }
 }
 
-void fillGraph_(Graph & graph, Cell & c, double velP, double epsilon,
+void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
         double delta, double symmX, double symmY, double symmZ){
 
     // helper variables to compute the slowness
@@ -960,24 +981,7 @@ void fillGraph_(Graph & graph, Cell & c, double velP, double epsilon,
         for (Index k = j + 1; k < ni.size(); k ++) {
             // compute phase angle theta
             vecPath = ni[k]->pos() - ni[j]->pos();
-            double dot = symmX * vecPath.x() + symmY * vecPath.y() + symmZ * vecPath.z();
-            double symmLen = sqrt(symmX * symmX + symmY * symmY + symmZ * symmZ);
-            double vecPathLen = sqrt(vecPath.x() * vecPath.x() + vecPath.y() * vecPath.y() + vecPath.z() * vecPath.z());
-            theta = acos(dot / (symmLen * vecPathLen));
-
-            sinThetaSq = sin(theta) * sin(theta);
-            cosThetaSq = cos(theta) * cos(theta);
-
-            // compute slowness
-            subst_a = 0.5 + epsilon * sinThetaSq;
-            subst_b = 2. * sinThetaSq * cosThetaSq;
-            subst_c = sqrt((subst_a * subst_a) - (subst_b * epsilon) + (subst_b * delta));
-
-            lambdaAc = sqrt(subst_a + subst_c);
-            
-            vel = velP * lambdaAc;
-
-            slowness = 1. / vel;
+            slowness = ttiToSlowness(vel0, epsilon, delta, symmX, symmY, symmZ, vecPath.x(), vecPath.y(), vecPath.z());
 
             fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
         }
@@ -1004,9 +1008,32 @@ Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, co
     return graph;
 }
 
-void velocityModelGradients(const double time, double & dTdVP, double & dTdEps, double & dTdDel,
-        double & dTdSymmX, double & dTdSymmY, double & dTdSymmZ) {
+double ttiToSlowness(double V0, double epsilon, double delta, double symmX, double symmY, double symmZ,
+        double pathX, double pathY, double pathZ) {
 
+    double theta;
+    double dot = symmX * pathX + symmY * pathY + symmZ * pathZ;
+    double symmLen = std::sqrt(symmX * symmX + symmY * symmY + symmZ * symmZ);
+    double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
+    double divisor = symmLen * vecPathLen;
+
+    // Avoid division by zero if symmLen or vecPathLen is zero
+    if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
+        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+    } else {
+        theta = std::acos(dot / (divisor));
+    }
+
+    double sinThetaSq = std::sin(theta) * std::sin(theta);
+    double cosThetaSq = std::cos(theta) * std::cos(theta);
+
+    double substA = 0.5 + epsilon * sinThetaSq;
+    double substB = 2. * sinThetaSq * cosThetaSq;
+    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
+
+    double lambdaAc = std::sqrt(substA + substC);
+    
+    return 1. / (V0 * lambdaAc);
 }
 
 } // namespace GIMLI{
