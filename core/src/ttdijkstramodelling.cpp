@@ -731,7 +731,12 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVe
     return  resp;
 }
 
-// TODO rewrite this.
+void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const RVector & epsilon,
+    const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+    this->createJacobian(*dynamic_cast < RSparseMapMatrix * > (this->jacobian_),
+                         velP0, epsilon, delta, symmX, symmY, symmZ);
+}
+
 void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian, const RVector & velP0, const RVector & epsilon,
     const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
 
@@ -740,7 +745,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 
     // derivatives of the travel time with respect to slowness, P-wave velocity, pseudo-acoustic factor, epsilon, delta
     // and the x-, y- and z-component of the orientation of the symmetry axis
-    double dTdS, dTdVP, dTdL, dTdV0, dTdE, dTdD, dTdOx, dTdOy, dTdOz;
+    double dTdS, dTdVP, dTdL, dTdc, dTdTheta, dTdV0, dTdE, dTdD, dTdOx, dTdOy, dTdOz;
 
     if (min(this->mesh_->cellMarkers()) < 0){
         log(Warning, "There are cells with marker -1. "
@@ -892,8 +897,8 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 dTdS = edgeLength / neighborCells.size();
                 dTdVP = -dTdS / (currentVelP * currentVelP);
                 dTdL = dTdVP * currentVel0;
-                double dTdc = dTdL / (2. * std::sqrt(substA + substC));
-                double dTdTheta = dTdc * (
+                dTdc = dTdL / (2. * std::sqrt(substA + substC));
+                dTdTheta = dTdc * (
                     (2. * (substA * currentEpsilon * sinTheta * cosTheta + (currentDelta - currentEpsilon) * (sinTheta * cosTheta * cosThetaSq - sinTheta * sinThetaSq * cosTheta)))
                     /
                     (std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon)))

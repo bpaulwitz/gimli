@@ -251,8 +251,13 @@ public:
     // destructor
     virtual ~TravelTimeDijkstraModellingTTI();
 
+    /*! Interface. */
     // response function. Takes TTI velocity model and computes slowness to use base response.
     virtual RVector response(const RVector & velP, const RVector & epsilon,
+        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+
+    /*! Interface. */
+    virtual void createJacobian(const RVector & velP, const RVector & epsilon,
         const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 
     // computes the Jacobian
