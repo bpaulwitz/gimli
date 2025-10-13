@@ -683,11 +683,39 @@ void TTModellingWithOffset::createJacobian(const RVector & model){
     }
 }
 
+TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(bool verbose)
+    : TravelTimeDijkstraModelling(verbose){
+}
+
 TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(Mesh & mesh, DataContainer & dataContainer, bool verbose) :
     TravelTimeDijkstraModelling(mesh, dataContainer, verbose) {
 }
 
 TravelTimeDijkstraModellingTTI::~TravelTimeDijkstraModellingTTI() { }
+
+RVector TravelTimeDijkstraModellingTTI::response(const RVector & combined_model) {
+    RVector velP0, epsilon, delta, symmX, symmY, symmZ;
+    assert(combined_model.size() % 6 == 0);
+    int paramSize = combined_model.size() / 6;
+
+    velP0.resize(paramSize);
+    epsilon.resize(paramSize);
+    delta.resize(paramSize);
+    symmX.resize(paramSize);
+    symmY.resize(paramSize);
+    symmZ.resize(paramSize);
+
+    // copy data (only works without bound check in subscription operator see Vector::copy_)
+    std::copy(&combined_model[0], &combined_model[paramSize], &velP0[0]);
+    std::copy(&combined_model[paramSize + 1], &combined_model[2 * paramSize], &epsilon[0]);
+    std::copy(&combined_model[2 * paramSize + 1], &combined_model[3 * paramSize], &delta[0]);
+    std::copy(&combined_model[3 * paramSize + 1], &combined_model[4 * paramSize], &symmX[0]);
+    std::copy(&combined_model[4 * paramSize + 1], &combined_model[5 * paramSize], &symmY[0]);
+    std::copy(&combined_model[5 * paramSize + 1], &combined_model[6 * paramSize], &symmZ[0]);
+
+    // call actual function
+    return this->response(velP0, epsilon, delta, symmX, symmY, symmZ);
+}
 
 
 RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVector & epsilon,
@@ -731,10 +759,62 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVe
     return  resp;
 }
 
+void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & combined_model) {
+    RVector velP0, epsilon, delta, symmX, symmY, symmZ;
+    assert(combined_model.size() % 6 == 0);
+    int paramSize = combined_model.size() / 6;
+
+    velP0.resize(paramSize);
+    epsilon.resize(paramSize);
+    delta.resize(paramSize);
+    symmX.resize(paramSize);
+    symmY.resize(paramSize);
+    symmZ.resize(paramSize);
+
+    // copy data (only works without bound check in subscription operator see Vector::copy_)
+    std::copy(&combined_model[0], &combined_model[paramSize], &velP0[0]);
+    std::copy(&combined_model[paramSize + 1], &combined_model[2 * paramSize], &epsilon[0]);
+    std::copy(&combined_model[2 * paramSize + 1], &combined_model[3 * paramSize], &delta[0]);
+    std::copy(&combined_model[3 * paramSize + 1], &combined_model[4 * paramSize], &symmX[0]);
+    std::copy(&combined_model[4 * paramSize + 1], &combined_model[5 * paramSize], &symmY[0]);
+    std::copy(&combined_model[5 * paramSize + 1], &combined_model[6 * paramSize], &symmZ[0]);
+
+    // call actual function
+    this->createJacobian(velP0, epsilon, delta, symmX, symmY, symmZ);
+}
+
 void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const RVector & epsilon,
     const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
     this->createJacobian(*dynamic_cast < RSparseMapMatrix * > (this->jacobian_),
                          velP0, epsilon, delta, symmX, symmY, symmZ);
+}
+
+double ttiToSlowness(double V0, double epsilon, double delta, double symmX, double symmY, double symmZ,
+        double pathX, double pathY, double pathZ) {
+
+    double theta;
+    double dot = symmX * pathX + symmY * pathY + symmZ * pathZ;
+    double symmLen = std::sqrt(symmX * symmX + symmY * symmY + symmZ * symmZ);
+    double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
+    double divisor = symmLen * vecPathLen;
+
+    // Avoid division by zero if symmLen or vecPathLen is zero
+    if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
+        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+    } else {
+        theta = std::acos(dot / divisor);
+    }
+
+    double sinThetaSq = std::sin(theta) * std::sin(theta);
+    double cosThetaSq = std::cos(theta) * std::cos(theta);
+
+    double substA = 0.5 + epsilon * sinThetaSq;
+    double substB = 2. * sinThetaSq * cosThetaSq;
+    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
+
+    double lambdaAc = std::sqrt(substA + substC);
+    
+    return 1. / (V0 * lambdaAc);
 }
 
 void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian, const RVector & velP0, const RVector & epsilon,
@@ -877,7 +957,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
                     theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
                 } else {
-                    theta = std::acos(dot / (divisor));
+                    theta = std::acos(dot / divisor);
                 }
 
                 sinTheta = std::sin(theta);
@@ -899,9 +979,9 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 dTdL = dTdVP * currentVel0;
                 dTdc = dTdL / (2. * std::sqrt(substA + substC));
                 dTdTheta = dTdc * (
-                    (2. * (substA * currentEpsilon * sinTheta * cosTheta + (currentDelta - currentEpsilon) * (sinTheta * cosTheta * cosThetaSq - sinTheta * sinThetaSq * cosTheta)))
+                    (2. * ((substA * currentEpsilon * sinTheta * cosTheta) + ((currentDelta - currentEpsilon) * ((sinTheta * cosTheta * cosThetaSq) - (sinTheta * sinThetaSq * cosTheta)))))
                     /
-                    (std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon)))
+                    (std::sqrt((substA * substA) + (substB * (currentDelta - currentEpsilon))))
                     );
 
 
@@ -1013,32 +1093,21 @@ Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, co
     return graph;
 }
 
-double ttiToSlowness(double V0, double epsilon, double delta, double symmX, double symmY, double symmZ,
-        double pathX, double pathY, double pathZ) {
+RVector TravelTimeDijkstraModellingTTI::paramsToCombinedModel(const RVector & velP, const RVector & epsilon,
+        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+    size_t paramSize = velP.size();
 
-    double theta;
-    double dot = symmX * pathX + symmY * pathY + symmZ * pathZ;
-    double symmLen = std::sqrt(symmX * symmX + symmY * symmY + symmZ * symmZ);
-    double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
-    double divisor = symmLen * vecPathLen;
+    RVector model = RVector(paramSize * 6);
 
-    // Avoid division by zero if symmLen or vecPathLen is zero
-    if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
-        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
-    } else {
-        theta = std::acos(dot / (divisor));
-    }
+    // copy data (only works without bound check in subscription operator see Vector::copy_)
+    std::copy(&velP[0], &velP[paramSize], &model[0]);
+    std::copy(&epsilon[0], &epsilon[paramSize], &model[paramSize]);
+    std::copy(&delta[0], &delta[paramSize], &model[2 * paramSize]);
+    std::copy(&symmX[0], &symmX[paramSize], &model[3 * paramSize]);
+    std::copy(&symmY[0], &symmY[paramSize], &model[4 * paramSize]);
+    std::copy(&symmZ[0], &symmZ[paramSize], &model[5 * paramSize]);
 
-    double sinThetaSq = std::sin(theta) * std::sin(theta);
-    double cosThetaSq = std::cos(theta) * std::cos(theta);
-
-    double substA = 0.5 + epsilon * sinThetaSq;
-    double substB = 2. * sinThetaSq * cosThetaSq;
-    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
-
-    double lambdaAc = std::sqrt(substA + substC);
-    
-    return 1. / (V0 * lambdaAc);
+    return model;
 }
 
 } // namespace GIMLI{

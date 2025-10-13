@@ -138,6 +138,115 @@ class TravelTimeDijkstraModelling(MeshModelling):
 
             return gci, cBar
 
+class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
+    def __init__(self, **kwargs):
+        secNodes = kwargs.pop("secNodes", 3)
+        super().__init__(**kwargs)
+
+        self._core = pg.core.TravelTimeDijkstraModellingTTI()
+        self._core.setRegionManager(self.regionManagerRef())
+
+        self._useGradient = None  # assumed to be [vTop, vBot] if set
+        self._refineSecNodes = secNodes
+        # self._refineSecNodes = kwargs.pop("secNodes", 3)  # inactive!
+        self.jacobian = self._core.jacobian
+        self.setThreadCount = self._core.setThreadCount
+        # self.createJacobian = self.dijkstra.createJacobian
+        self.setJacobian(self._core.jacobian())
+
+    '''
+    def createJacobian(self, V0, epsilon, delta, symmX, symmY, symmZ):
+        """Create Jacobian (way matrix)."""
+        if not self.mesh():
+            pg.critical("no mesh")
+        return self._core.createJacobian(V0, epsilon, delta, symmX, symmY, symmZ)
+    '''
+
+    def createJacobian(self, model):
+        """Create Jacobian (way matrix)."""
+        if not self.mesh():
+            pg.critical("no mesh")
+        return self._core.createJacobian(model)
+    
+    def jacobian(self):
+        return self._core.jacobian()
+
+    '''
+    def response(self, V0, epsilon, delta, symmX, symmY, symmZ):
+        """Return forward response (simulated traveltimes)."""
+        if not self.mesh():
+            pg.critical("no mesh")
+        return self._core.response(V0, epsilon, delta, symmX, symmY, symmZ)
+    '''
+
+    def response(self, model):
+        """Return forward response (simulated traveltimes)."""
+        if not self.mesh():
+            pg.critical("no mesh")
+        return self._core.response(model)
+
+    def paramsToModel(self, V0, epsilon, delta, symmX, symmY, symmZ):
+        return self._core.paramsToCombinedModel(V0, epsilon, delta, symmX, symmY, symmZ)
+
+    def modelToParams(self, model):
+        model = np.array(model)
+        assert(model.shape[0] % 6 == 0)
+        paramLength = model.shape[0] // 6
+        params = model.reshape([6, paramLength])
+        vp0 = params[0]
+        eps = params[1]
+        delta = params[2]
+        symmX = params[3]
+        symmY = params[4]
+        symmZ = params[5]
+        return vp0, eps, delta, symmX, symmY, symmZ
+
+    def createStartModel(self, dataVals):
+        """Create a starting model from data values (gradient or constant)."""
+        sm = None
+
+        # TODO this case is not implemented yet
+        if self._useGradient is not None:
+            [vTop, vBot] = self._useGradient  # something strange here!!!
+            pg.info('Create gradient starting model. {0}: {1}'.format(vTop,
+                                                                      vBot))
+            sm = createGradientModel2D(self.data,
+                                       self.paraDomain,
+                                       vTop, vBot)
+        else:
+            dists = shotReceiverDistances(self.data, full=True)
+            aVel = dists / dataVals
+
+            # pg._r(self.regionManager().parameterCount())
+            v0 = np.array(pg.Vector(self.regionManager().parameterCount(),
+                           pg.math.median(aVel)))
+            # make sure to have the starting model values not zero as it leads to NaN in phiM otherwise!
+            eps = np.zeros_like(v0, dtype=np.float32) + 0.01
+            delta = np.zeros_like(v0, dtype=np.float32) + 0.02
+            symmX = np.zeros_like(v0, dtype=np.float32) + 0.000001
+            symmY = np.zeros_like(v0, dtype=np.float32) + 0.000001
+            symmZ = np.zeros_like(v0, dtype=np.float32) + 1.0
+
+            sm = self.paramsToModel(v0, eps, delta, symmX, symmY, symmZ)
+            pg.info('Create constant starting model:', sm[0])
+
+        return sm
+
+    # repeat constraint matrix by 6 (for every parameter in the model)
+    def createConstraints(self, C = None):
+        """ Create constraint matrix.
+        """
+        super().createConstraints()
+        if C is not None:
+            self.C1 = C
+        elif isinstance(self.constraints(), pg.SparseMapMatrix):
+            self.C1 = pg.SparseMapMatrix(self.constraintsRef())
+            # make a copy because it will be overwritten
+        else:
+            self.C1 = self.constraints()
+
+        self.C = pg.matrix.RepeatDMatrix(self.C1, 6)
+        self.setConstraints(self.C)
 
 class FatrayDijkstraModellingInterpolate(TravelTimeDijkstraModelling):
     """Shortest-path (Dijkstra) based travel time with fat ray jacobian."""

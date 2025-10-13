@@ -9,7 +9,7 @@ import pygimli as pg
 from pygimli.frameworks import MeshMethodManager
 
 from pygimli.utils import getSavePath
-from . modelling import TravelTimeDijkstraModelling, FatrayDijkstraModelling
+from . modelling import TravelTimeDijkstraModelling, FatrayDijkstraModelling, TravelTimeDijkstraModellingTTI
 from . plotting import drawFirstPicks
 
 
@@ -30,6 +30,7 @@ class TravelTimeManager(MeshMethodManager):
             when calling the inversion.
         """
         self.useFatray = kwargs.pop("fatray", False)
+        self.useTTI = kwargs.pop("TTI", False)
         self.frequency = kwargs.pop("frequency", 100.)
         self.secNodes = kwargs.pop("secNodes", 2)
 
@@ -53,6 +54,8 @@ class TravelTimeManager(MeshMethodManager):
         """
         if self.useFatray:
             fop = FatrayDijkstraModelling(frequency=self.frequency, **kwargs)
+        elif self.useTTI:
+            fop = TravelTimeDijkstraModellingTTI(verbose=self.verbose)
         else:
             fop = TravelTimeDijkstraModelling(verbose=self.verbose)
         return fop
@@ -173,6 +176,8 @@ class TravelTimeManager(MeshMethodManager):
         """
         verbose = kwargs.pop('verbose', self.verbose)
 
+        tti_model = kwargs.pop("tti_model", None)
+
         fop = self.fop
         scheme = scheme or self.data
         fop.data = scheme
@@ -184,11 +189,15 @@ class TravelTimeManager(MeshMethodManager):
         if vel is not None:
             slowness = 1/vel
 
-        if slowness is None:
-            pg.critical("Need some slowness or velocity distribution for"
+        if (self.useTTI is None and slowness is None) and (self.useTTI and tti_model is None):
+            pg.critical("Need some slowness (isotropic model) or velocity distribution (TTI) for"
                         " simulation.")
 
-        if len(slowness) == self.fop.mesh().cellCount():
+        if self.useTTI and tti_model is not None:
+            t = fop.response(tti_model)
+            if verbose:
+                print('min/max t:', min(t), max(t))
+        elif len(slowness) == self.fop.mesh().cellCount():
             t = fop.response(slowness)
             if verbose:
                 print('min/max t:', min(t), max(t))
@@ -263,9 +272,11 @@ class TravelTimeManager(MeshMethodManager):
             self.fop._useGradient = [vTop, vBottom]
         else:
             self.fop._useGradient = None
+        
+        startModel = kwargs.pop('startModel', None)
 
         ### invert return mapped models
-        slowness = super().invert(data, mesh, **kwargs)
+        slowness = super().invert(data, mesh, startModel=startModel, **kwargs)
         velocity = 1.0 / slowness
         velocity.isParaModel = slowness.isParaModel
         self.fw.model = 1.0 / self.fw.model #C42 self.fw only hold non-mapped model

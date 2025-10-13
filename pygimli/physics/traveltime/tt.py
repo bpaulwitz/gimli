@@ -14,8 +14,15 @@ from .plotting import drawTravelTimeData, drawVA, drawFirstPicks
 
 def simulate(mesh, scheme, slowness=None, **kwargs):
     """Simulate traveltime data."""
-    mgr = TravelTimeManager()
-    return mgr.simulate(mesh=mesh, scheme=scheme, slowness=slowness, **kwargs)
+
+    tti_model = kwargs.pop("tti_model", None)
+    
+    if tti_model is not None:
+        mgr = TravelTimeManager(TTI=True)
+    else:
+        mgr = TravelTimeManager()
+    
+    return mgr.simulate(mesh=mesh, scheme=scheme, slowness=slowness, tti_model=tti_model, **kwargs)
 
 
 simulate.__doc__ = TravelTimeManager.simulate.__doc__

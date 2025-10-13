@@ -245,33 +245,37 @@ protected:
  */
 class DLLEXPORT TravelTimeDijkstraModellingTTI: public TravelTimeDijkstraModelling{
 public: 
-    // constructor
-    TravelTimeDijkstraModellingTTI(Mesh & mesh, DataContainer & dataContainer, bool verbose);
+    // constructors
+    TravelTimeDijkstraModellingTTI(bool verbose = false);
+    TravelTimeDijkstraModellingTTI(Mesh & mesh, DataContainer & dataContainer, bool verbose = false);
 
     // destructor
     virtual ~TravelTimeDijkstraModellingTTI();
 
     /*! Interface. */
+    // it is necessary to provide the inversion method with a single model vector, therefore it is just a concatenation of all parameters
+    virtual RVector response(const RVector & combined_model);
+
     // response function. Takes TTI velocity model and computes slowness to use base response.
     virtual RVector response(const RVector & velP, const RVector & epsilon,
         const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 
     /*! Interface. */
+    virtual void createJacobian(const RVector & combined_model);
+
+    // computes the Jacobian
     virtual void createJacobian(const RVector & velP, const RVector & epsilon,
         const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 
-    // computes the Jacobian
     virtual void createJacobian(RSparseMapMatrix & jacobian, const RVector & velP, const RVector & epsilon,
         const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 
     virtual Graph createGraph(const RVector & velPerCell, const RVector & epsPerCell,
         const RVector & delPerCell, const RVector & symmXPerCell, const RVector & symmYPerCell, const RVector & symmZPerCell);
+
+    virtual RVector paramsToCombinedModel(const RVector & velP, const RVector & epsilon,
+        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
 };
-
-double ttiToSlowness(double V0, double epsilon, double delta, double symmX, double symmY, double symmZ,
-        double pathX, double pathY, double pathZ);
-
-
 
 } //namespace GIMLI
 
