@@ -971,7 +971,6 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 }
 
                 sinTheta = std::sin(theta);
-                //cosTheta = std::cos(theta);
                 sinThetaSq = sinTheta * sinTheta;
                 cosThetaSq = cosTheta * cosTheta;
 
@@ -984,13 +983,12 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 currentVelP = currentVel0 * lambdaAc;
 
                 // partial derivatives of velocity model parameters
-                
-                // V0
+                //// V0
                 dTdS = edgeLength / neighborCells.size();
                 dTdVP = -dTdS / (currentVelP * currentVelP);
                 dTdV0 = dTdVP * lambdaAc;
 
-                // Epsilon
+                //// Epsilon
                 dTdL = dTdVP * currentVel0;
                 dLda_c = 1. / (2. * lambdaAc);
                 dadE = sinThetaSq;
@@ -998,16 +996,16 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 dLdE = (dLda_c * dadE) + (dLda_c * dcdE);
                 dTdE = dTdL * dLdE;
 
-                // Delta
+                //// Delta
                 dTdc = dTdL / (2. * lambdaAc);
-                dTdD = dTdc * ((substB) / (2. * substC));
+                dTdD = dTdc * (substB / (2. * substC));
 
-                // Symmetry axis
+                //// Symmetry axis
                 dcda = substA / substC;
-                dcdb = (currentDelta - currentEpsilon) / 2. * substC;
+                dcdb = (currentDelta - currentEpsilon) / (2. * substC);
                 dadTheta = 2. * currentEpsilon * sinTheta * cosTheta;
                 dbdTheta = 4. * ((sinTheta * cosTheta * cosThetaSq) - (sinTheta * sinThetaSq * cosTheta));
-                dThetadCos = -1 / (1 - (cosTheta * cosTheta));
+                dThetadCos = -1 / std::sqrt(1 - (cosTheta * cosTheta));
                 dCosdDot = 1. / symmLenTimesVecLen;
                 dCosdSymmTimesVecLen = -dot / (symmLenTimesVecLen * symmLenTimesVecLen);
                 dSymmTimesVecLendSymmLen = vecPathLen;
