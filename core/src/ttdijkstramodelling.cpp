@@ -773,11 +773,11 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & combined_mod
 
     // copy data (only works without bound check in subscription operator see Vector::copy_)
     std::copy(&combined_model[0], &combined_model[paramSize], &velP0[0]);
-    std::copy(&combined_model[paramSize + 1], &combined_model[2 * paramSize], &epsilon[0]);
-    std::copy(&combined_model[2 * paramSize + 1], &combined_model[3 * paramSize], &delta[0]);
-    std::copy(&combined_model[3 * paramSize + 1], &combined_model[4 * paramSize], &symmX[0]);
-    std::copy(&combined_model[4 * paramSize + 1], &combined_model[5 * paramSize], &symmY[0]);
-    std::copy(&combined_model[5 * paramSize + 1], &combined_model[6 * paramSize], &symmZ[0]);
+    std::copy(&combined_model[paramSize], &combined_model[2 * paramSize], &epsilon[0]);
+    std::copy(&combined_model[2 * paramSize], &combined_model[3 * paramSize], &delta[0]);
+    std::copy(&combined_model[3 * paramSize], &combined_model[4 * paramSize], &symmX[0]);
+    std::copy(&combined_model[4 * paramSize], &combined_model[5 * paramSize], &symmY[0]);
+    std::copy(&combined_model[5 * paramSize], &combined_model[6 * paramSize], &symmZ[0]);
 
     // call actual function
     this->createJacobian(velP0, epsilon, delta, symmX, symmY, symmZ);
@@ -820,12 +820,22 @@ double ttiToSlowness(double V0, double epsilon, double delta, double symmX, doub
 void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian, const RVector & velP0, const RVector & epsilon,
     const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
 
-    // variables for forward modeling
-    double theta, VP, lambdaAc, substA, substB, substC, sinTheta, cosTheta, sinThetaSq, cosThetaSq;
-
-    // derivatives of the travel time with respect to slowness, P-wave velocity, pseudo-acoustic factor, epsilon, delta
-    // and the x-, y- and z-component of the orientation of the symmetry axis
-    double dTdS, dTdVP, dTdL, dTdc, dTdTheta, dTdV0, dTdE, dTdD, dTdOx, dTdOy, dTdOz;
+    // For the forward modelling part
+    //// Parameters and substitutions
+    double currentVel0, currentEpsilon, currentDelta, currentSymmX, currentSymmY, currentSymmZ;
+    double theta, sinTheta, cosTheta, sinThetaSq, cosThetaSq, substA, substB, substC, lambdaAc, currentVelP;
+    //// Intermediate variables to store some computation results
+    double dot, symmLen, vecPathLen, symmLenTimesVecLen;
+    // Partial derivatives
+    //// For VP
+    double dTdS, dTdVP, dTdV0;
+    //// For Epsilon
+    double dTdL, dLda_c, dadE, dcdE, dLdE, dTdE;
+    //// For Delta
+    double dTdc, dTdD;
+    //// For the symmetry axis
+    double dcda, dcdb, dadTheta, dbdTheta, dThetadCos, dCosdDot, dCosdSymmTimesVecLen, dSymmTimesVecLendSymmLen;
+    double dThetadSx, dThetadSy, dThetadSz, dTdSx, dTdSy, dTdSz;
 
     if (min(this->mesh_->cellMarkers()) < 0){
         log(Warning, "There are cells with marker -1. "
@@ -939,25 +949,25 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 const auto cellID = neighborCellIDs[i];
 
                 // get TTI parameters for current cell
-                double currentVel0 = velPerCell[cellID];
-                double currentEpsilon = epsPerCell[cellID];
-                double currentDelta = delPerCell[cellID];
-                double currentSymmX = symmXPerCell[cellID];
-                double currentSymmY = symmYPerCell[cellID];
-                double currentSymmZ = symmZPerCell[cellID];
+                currentVel0 = velPerCell[cellID];
+                currentEpsilon = epsPerCell[cellID];
+                currentDelta = delPerCell[cellID];
+                currentSymmX = symmXPerCell[cellID];
+                currentSymmY = symmYPerCell[cellID];
+                currentSymmZ = symmZPerCell[cellID];
 
                 // compute phase angle theta
-                double dot = currentSymmX * vecPath.x() + currentSymmY * vecPath.y() + currentSymmZ * vecPath.z();
-                double symmLen = std::sqrt(currentSymmX * currentSymmX + currentSymmY * currentSymmY + currentSymmZ * currentSymmZ);
-                double vecPathLen = std::sqrt(vecPath.x() * vecPath.x() + vecPath.y() * vecPath.y() + vecPath.z() * vecPath.z());
-                double divisor = symmLen * vecPathLen;
-                double cosTheta = dot / divisor;
+                dot = currentSymmX * vecPath.x() + currentSymmY * vecPath.y() + currentSymmZ * vecPath.z();
+                symmLen = std::sqrt(currentSymmX * currentSymmX + currentSymmY * currentSymmY + currentSymmZ * currentSymmZ);
+                vecPathLen = std::sqrt(vecPath.x() * vecPath.x() + vecPath.y() * vecPath.y() + vecPath.z() * vecPath.z());
+                symmLenTimesVecLen = symmLen * vecPathLen;
+                cosTheta = dot / symmLenTimesVecLen;
                 
                 // Avoid division by zero if symmLen or vecPathLen is zero
                 if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
                     theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
                 } else {
-                    theta = std::acos(dot / divisor);
+                    theta = std::acos(dot / symmLenTimesVecLen);
                 }
 
                 sinTheta = std::sin(theta);
@@ -967,47 +977,49 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 
                 substA = 0.5 + currentEpsilon * sinThetaSq;
                 substB = 2. * sinThetaSq * cosThetaSq;
-                substC = std::sqrt(substA * substA - substB * currentDelta + substB * currentDelta);
+                substC = std::sqrt((substA * substA) + substB * (currentDelta - currentEpsilon));
 
                 lambdaAc = std::sqrt(substA + substC);
 
-                double currentVelP = currentVel0 * lambdaAc;
+                currentVelP = currentVel0 * lambdaAc;
 
                 // partial derivatives of velocity model parameters
+                
+                // V0
                 dTdS = edgeLength / neighborCells.size();
                 dTdVP = -dTdS / (currentVelP * currentVelP);
-                dTdL = dTdVP * currentVel0;
-                dTdc = dTdL / (2. * std::sqrt(substA + substC));
-                dTdTheta = dTdc * (
-                    (2. * ((substA * currentEpsilon * sinTheta * cosTheta) + ((currentDelta - currentEpsilon) * ((sinTheta * cosTheta * cosThetaSq) - (sinTheta * sinThetaSq * cosTheta)))))
-                    /
-                    (std::sqrt((substA * substA) + (substB * (currentDelta - currentEpsilon))))
-                    );
-
-
                 dTdV0 = dTdVP * lambdaAc;
-                dTdE = dTdc * ((2. * substA * sinThetaSq - substB) /
-                               (2. * std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon))));
-                dTdD = dTdc * ((substB) /
-                               (2. * std::sqrt(substA * substA + substB * (currentDelta - currentEpsilon))));
-                dTdOx = dTdTheta * 
-                    (
-                        (currentSymmX * dot * (vecPathLen / symmLen) - vecPath.x() * divisor)
-                        /
-                        (divisor * divisor * std::sqrt(1. - cosThetaSq))
-                    );
-                dTdOy = dTdTheta * 
-                    (
-                        (currentSymmY * dot * (vecPathLen / symmLen) - vecPath.y() * divisor)
-                        /
-                        (divisor * divisor * std::sqrt(1. - cosThetaSq))
-                    );
-                dTdOz = dTdTheta * 
-                    (
-                        (currentSymmZ * dot * (vecPathLen / symmLen) - vecPath.z() * divisor)
-                        /
-                        (divisor * divisor * std::sqrt(1. - cosThetaSq))
-                    );
+
+                // Epsilon
+                dTdL = dTdVP * currentVel0;
+                dLda_c = 1. / (2. * lambdaAc);
+                dadE = sinThetaSq;
+                dcdE = (2. * substA * sinThetaSq - substB) / (2. * substC);
+                dLdE = (dLda_c * dadE) + (dLda_c * dcdE);
+                dTdE = dTdL * dLdE;
+
+                // Delta
+                dTdc = dTdL / (2. * lambdaAc);
+                dTdD = dTdc * ((substB) / (2. * substC));
+
+                // Symmetry axis
+                dcda = substA / substC;
+                dcdb = (currentDelta - currentEpsilon) / 2. * substC;
+                dadTheta = 2. * currentEpsilon * sinTheta * cosTheta;
+                dbdTheta = 4. * ((sinTheta * cosTheta * cosThetaSq) - (sinTheta * sinThetaSq * cosTheta));
+                dThetadCos = -1 / (1 - (cosTheta * cosTheta));
+                dCosdDot = 1. / symmLenTimesVecLen;
+                dCosdSymmTimesVecLen = -dot / (symmLenTimesVecLen * symmLenTimesVecLen);
+                dSymmTimesVecLendSymmLen = vecPathLen;
+                dThetadSx = dThetadCos * (dCosdDot * vecPath.x() + dCosdSymmTimesVecLen *
+                                    dSymmTimesVecLendSymmLen * (currentSymmX / symmLen));
+                dThetadSy = dThetadCos * (dCosdDot * vecPath.y() + dCosdSymmTimesVecLen *
+                                    dSymmTimesVecLendSymmLen * (currentSymmY / symmLen));
+                dThetadSz = dThetadCos * (dCosdDot * vecPath.z() + dCosdSymmTimesVecLen *
+                                    dSymmTimesVecLendSymmLen * (currentSymmZ / symmLen));
+                dTdSx = dTdL * (dLda_c * dadTheta * dThetadSx + (dLda_c * ((dcda * dadTheta * dThetadSx) + (dcdb * dbdTheta * dThetadSx))));
+                dTdSy = dTdL * (dLda_c * dadTheta * dThetadSy + (dLda_c * ((dcda * dadTheta * dThetadSy) + (dcdb * dbdTheta * dThetadSy))));
+                dTdSz = dTdL * (dLda_c * dadTheta * dThetadSz + (dLda_c * ((dcda * dadTheta * dThetadSz) + (dcdb * dbdTheta * dThetadSz))));
 
                 // entry for P-wave velocity
                 jacobian[dataIdx][c->marker()] += dTdV0;
@@ -1019,16 +1031,23 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 jacobian[dataIdx][c->marker() + 2 * nModel] += dTdD;
 
                 // entry for x component of symmetry axis orientation
-                jacobian[dataIdx][c->marker() + 3 * nModel] += dTdOx;
+                jacobian[dataIdx][c->marker() + 3 * nModel] += dTdSx;
 
                 // entry for y component of symmetry axis orientation
-                jacobian[dataIdx][c->marker() + 4 * nModel] += dTdOy;
+                jacobian[dataIdx][c->marker() + 4 * nModel] += dTdSy;
 
                 // entry for z component of symmetry axis orientation
-                jacobian[dataIdx][c->marker() + 5 * nModel] += dTdOz;
+                jacobian[dataIdx][c->marker() + 5 * nModel] += dTdSz;
             }
         }
     }
+    std::cout << std::endl << "Sum abs vp0: " << sumVp0 << std::endl;
+    std::cout << "Sum abs eps: " << sumEps << std::endl;
+    std::cout << "Sum abs del: " << sumDel << std::endl;
+    std::cout << "Sum abs Sx: " << sumSx << std::endl;
+    std::cout << "Sum abs Sy: " << sumSy << std::endl;
+    std::cout << "Sum abs Sz: " << sumSz << std::endl;
+
     if (this->verbose()){
         std::cout << "/" << swatch.duration(true) << " ";
         std::cout << std::endl;
@@ -1038,11 +1057,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
         double delta, double symmX, double symmY, double symmZ){
 
-    // helper variables to compute the slowness
-    double slowness, theta;
-    double subst_a, subst_b, subst_c;
-    double lambdaEll, lambdaEllSq, lambdaAc, vel;
-    double sinThetaSq, cosThetaSq;
+    double slowness;
     RVector3 vecPath; // vector between two nodes
 
     std::vector< Node * > ni(c.nodes());
@@ -1064,8 +1079,9 @@ void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
 
     for (Index j = 0; j < ni.size()-1; j ++) {
         for (Index k = j + 1; k < ni.size(); k ++) {
-            // compute phase angle theta
+            // compute wavefront path
             vecPath = ni[k]->pos() - ni[j]->pos();
+            // compute slowness
             slowness = ttiToSlowness(vel0, epsilon, delta, symmX, symmY, symmZ, vecPath.x(), vecPath.y(), vecPath.z());
 
             fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
