@@ -148,6 +148,7 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
 
         self._useGradient = None  # assumed to be [vTop, vBot] if set
         self._refineSecNodes = secNodes
+
         # self._refineSecNodes = kwargs.pop("secNodes", 3)  # inactive!
         self.jacobian = self._core.jacobian
         self.setThreadCount = self._core.setThreadCount
@@ -188,6 +189,38 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
     def paramsToModel(self, V0, epsilon, delta, symmX, symmY, symmZ):
         return self._core.paramsToCombinedModel(V0, epsilon, delta, symmX, symmY, symmZ)
 
+    def setMesh(self, mesh, ignoreRegionManager: bool = False):
+        """ Set mesh and specify whether region manager can be ignored.
+        """
+        # pg._b('setMesh', id(mesh), mesh, ignoreRegionManager)
+        # keep a copy, just in case
+        self._baseMesh = mesh
+        self._baseMesh["marker"] = 0
+
+        if ignoreRegionManager is True:
+            pg.warn("Warning: TravelTimeDijkstraModellingTTI.setMesh(mesh, ignoreRegionManager) was run with ignoreRegionManager=True. This is not possible because the region manager needs to account for the additional parameters in the TTI case. Setting ignoreRegionManager to False...")
+            ignoreRegionManager = False
+
+        self._regionManagerInUse = True
+
+        self.m1 = pg.Mesh(self._baseMesh)
+        self.m2 = pg.Mesh(self._baseMesh)
+        self.m3 = pg.Mesh(self._baseMesh)
+        self.m4 = pg.Mesh(self._baseMesh)
+        self.m5 = pg.Mesh(self._baseMesh)
+
+        # copy the mesh to the region manager who renumber cell markers
+        self.clearRegionProperties()
+        self.regionManager().setMesh(self._baseMesh)
+        self.setDefaultBackground()
+
+        # add artificial regions for the other parameters
+        self.regionManager().addRegion(1, self.m1, 0)
+        self.regionManager().addRegion(2, self.m2, 0)
+        self.regionManager().addRegion(3, self.m3, 0)
+        self.regionManager().addRegion(4, self.m4, 0)
+        self.regionManager().addRegion(5, self.m5, 0)
+
     def modelToParams(self, model):
         model = np.array(model)
         assert(model.shape[0] % 6 == 0)
@@ -205,48 +238,47 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         """Create a starting model from data values (gradient or constant)."""
         sm = None
 
-        # TODO this case is not implemented yet
         if self._useGradient is not None:
             [vTop, vBot] = self._useGradient  # something strange here!!!
             pg.info('Create gradient starting model. {0}: {1}'.format(vTop,
                                                                       vBot))
-            sm = createGradientModel2D(self.data,
-                                       self.paraDomain,
-                                       vTop, vBot)
+            v0 = 1. / createGradientModel2D(self.data,
+                                            self.paraDomain,
+                                            vTop, vBot)
         else:
             dists = shotReceiverDistances(self.data, full=True)
             aVel = dists / dataVals
 
             # pg._r(self.regionManager().parameterCount())
-            v0 = np.array(pg.Vector(self.regionManager().parameterCount(),
+            v0 = np.array(pg.Vector(self.regionManager().parameterCount() // 6,
                            pg.math.median(aVel)))
-            # make sure to have the starting model values not zero as it leads to NaN in phiM otherwise!
-            eps = np.zeros_like(v0, dtype=np.float32) + 0.01
-            delta = np.zeros_like(v0, dtype=np.float32) + 0.02
-            symmX = np.zeros_like(v0, dtype=np.float32) + 0.000001
-            symmY = np.zeros_like(v0, dtype=np.float32) + 0.000001
-            symmZ = np.zeros_like(v0, dtype=np.float32) + 1.0
 
-            sm = self.paramsToModel(v0, eps, delta, symmX, symmY, symmZ)
-            pg.info('Create constant starting model:', sm[0])
+        # make sure to have the starting model values not zero as it leads to NaN in phiM otherwise!
+        eps = np.zeros_like(v0, dtype=np.float32) + 0.000001
+        delta = np.zeros_like(v0, dtype=np.float32) + 0.000001
+        symmX = np.zeros_like(v0, dtype=np.float32) + 0.000001
+        symmY = np.zeros_like(v0, dtype=np.float32) + 0.000001
+        symmZ = np.ones_like(v0, dtype=np.float32)
+
+        sm = self.paramsToModel(v0, eps, delta, symmX, symmY, symmZ)
 
         return sm
 
     # repeat constraint matrix by 6 (for every parameter in the model)
-    def createConstraints(self, C = None):
-        """ Create constraint matrix.
-        """
-        super().createConstraints()
-        if C is not None:
-            self.C1 = C
-        elif isinstance(self.constraints(), pg.SparseMapMatrix):
-            self.C1 = pg.SparseMapMatrix(self.constraintsRef())
-            # make a copy because it will be overwritten
-        else:
-            self.C1 = self.constraints()
+    #def createConstraints(self, C = None):
+    #    """ Create constraint matrix.
+    #    """
+    #    super().createConstraints()
+    #    if C is not None:
+    #        self.C1 = C
+    #    elif isinstance(self.constraints(), pg.SparseMapMatrix):
+    #        self.C1 = pg.SparseMapMatrix(self.constraintsRef())
+    #        # make a copy because it will be overwritten
+    #    else:
+    #        self.C1 = self.constraints()
 
-        self.C = pg.matrix.RepeatDMatrix(self.C1, 6)
-        self.setConstraints(self.C)
+    #    self.C = pg.matrix.RepeatDMatrix(self.C1, 6)
+    #    self.setConstraints(self.C)
 
 class FatrayDijkstraModellingInterpolate(TravelTimeDijkstraModelling):
     """Shortest-path (Dijkstra) based travel time with fat ray jacobian."""
