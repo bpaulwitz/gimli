@@ -707,11 +707,11 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & combined_model)
 
     // copy data (only works without bound check in subscription operator see Vector::copy_)
     std::copy(&combined_model[0], &combined_model[paramSize], &velP0[0]);
-    std::copy(&combined_model[paramSize + 1], &combined_model[2 * paramSize], &epsilon[0]);
-    std::copy(&combined_model[2 * paramSize + 1], &combined_model[3 * paramSize], &delta[0]);
-    std::copy(&combined_model[3 * paramSize + 1], &combined_model[4 * paramSize], &symmX[0]);
-    std::copy(&combined_model[4 * paramSize + 1], &combined_model[5 * paramSize], &symmY[0]);
-    std::copy(&combined_model[5 * paramSize + 1], &combined_model[6 * paramSize], &symmZ[0]);
+    std::copy(&combined_model[paramSize], &combined_model[2 * paramSize], &epsilon[0]);
+    std::copy(&combined_model[2 * paramSize], &combined_model[3 * paramSize], &delta[0]);
+    std::copy(&combined_model[3 * paramSize], &combined_model[4 * paramSize], &symmX[0]);
+    std::copy(&combined_model[4 * paramSize], &combined_model[5 * paramSize], &symmY[0]);
+    std::copy(&combined_model[5 * paramSize], &combined_model[6 * paramSize], &symmZ[0]);
 
     // call actual function
     return this->response(velP0, epsilon, delta, symmX, symmY, symmZ);
@@ -846,6 +846,13 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
         std::cout << "Background: " << background_ << " ->" << 1e16 << std::endl;
         background_ = 1e16;
     }
+
+    double sumVp0 = 0.;
+    double sumEps = 0.;
+    double sumDel = 0.;
+    double sumSx = 0.;
+    double sumSy = 0.;
+    double sumSz = 0.;
 
     RVector velPerCell(this->createMappedModel(velP0, background_));
     RVector epsPerCell(this->createMappedModel(epsilon, background_));
@@ -1036,6 +1043,13 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 
                 // entry for z component of symmetry axis orientation
                 jacobian[dataIdx][c->marker() + 5 * nModel] += dTdSz;
+
+                sumVp0 += std::abs(dTdV0);
+                sumEps += std::abs(dTdE);
+                sumDel += std::abs(dTdD);
+                sumSx += std::abs(dTdSx);
+                sumSy += std::abs(dTdSy);
+                sumSz += std::abs(dTdSz);
             }
         }
     }
