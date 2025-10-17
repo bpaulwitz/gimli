@@ -276,12 +276,18 @@ class TravelTimeManager(MeshMethodManager):
         startModel = kwargs.pop('startModel', None)
 
         ### invert return mapped models
-        slowness = super().invert(data, mesh, startModel=startModel, **kwargs)
-        velocity = 1.0 / slowness
-        velocity.isParaModel = slowness.isParaModel
-        self.fw.model = 1.0 / self.fw.model #C42 self.fw only hold non-mapped model
+        model = super().invert(data, mesh, startModel=startModel, **kwargs)
+        if self.useTTI:
+            combinedModel = model
+            combinedModel.isParaModel = model.isParaModel
+            output = combinedModel
+        else:
+            velocity = 1.0 / model
+            velocity.isParaModel = model.isParaModel
+            self.fw.model = 1.0 / self.fw.model #C42 self.fw only hold non-mapped model
+            output = velocity
         # that needs to be compatible to self.fw.mesh
-        return velocity
+        return output
 
 
     def showFit(self, axs=None, firstPicks=True, **kwargs):
