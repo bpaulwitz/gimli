@@ -182,8 +182,8 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
             pg.critical("no mesh")
         return self._core.response(model)
 
-    def paramsToModel(self, V0, epsilon, delta, symmX, symmY, symmZ):
-        return self._core.paramsToCombinedModel(V0, epsilon, delta, symmX, symmY, symmZ)
+    def paramsToModel(self, V0, epsilon, delta, incl, azim):
+        return self._core.paramsToCombinedModel(V0, epsilon, delta, incl, azim)
 
     def setMesh(self, mesh, ignoreRegionManager: bool = False):
         """ Set mesh and specify whether region manager can be ignored.
@@ -203,7 +203,6 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         self.m2 = pg.Mesh(self._baseMesh)
         self.m3 = pg.Mesh(self._baseMesh)
         self.m4 = pg.Mesh(self._baseMesh)
-        self.m5 = pg.Mesh(self._baseMesh)
 
         # copy the mesh to the region manager who renumber cell markers
         self.clearRegionProperties()
@@ -215,20 +214,19 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         self.regionManager().addRegion(2, self.m2, 0)
         self.regionManager().addRegion(3, self.m3, 0)
         self.regionManager().addRegion(4, self.m4, 0)
-        self.regionManager().addRegion(5, self.m5, 0)
+        self.regionManager().addRegion(5, self.m4, 0)
 
     def modelToParams(self, model):
         model = np.array(model)
-        assert(model.shape[0] % 6 == 0)
-        paramLength = model.shape[0] // 6
-        params = model.reshape([6, paramLength])
+        assert(model.shape[0] % 5 == 0)
+        paramLength = model.shape[0] // 5
+        params = model.reshape([5, paramLength])
         vp0 = params[0]
         eps = params[1]
         delta = params[2]
-        symmX = params[3]
-        symmY = params[4]
-        symmZ = params[5]
-        return vp0, eps, delta, symmX, symmY, symmZ
+        incl = params[3]
+        azim = params[4]
+        return vp0, eps, delta, incl, azim
 
     def createStartModel(self, dataVals):
         """Create a starting model from data values (gradient or constant)."""
@@ -252,29 +250,12 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         # make sure to have the starting model values not zero as it leads to NaN in phiM otherwise!
         eps = np.zeros_like(v0, dtype=np.float32) + 0.000001
         delta = np.zeros_like(v0, dtype=np.float32) + 0.000001
-        symmX = np.zeros_like(v0, dtype=np.float32) + 0.000001
-        symmY = np.zeros_like(v0, dtype=np.float32) + 0.000001
-        symmZ = np.ones_like(v0, dtype=np.float32)
+        incl = np.zeros_like(v0, dtype=np.float32) + 0.000001
+        azim = np.zeros_like(v0, dtype=np.float32) + 0.000001
 
-        sm = self.paramsToModel(v0, eps, delta, symmX, symmY, symmZ)
+        sm = self.paramsToModel(v0, eps, delta, incl, azim)
 
         return sm
-
-    # repeat constraint matrix by 6 (for every parameter in the model)
-    #def createConstraints(self, C = None):
-    #    """ Create constraint matrix.
-    #    """
-    #    super().createConstraints()
-    #    if C is not None:
-    #        self.C1 = C
-    #    elif isinstance(self.constraints(), pg.SparseMapMatrix):
-    #        self.C1 = pg.SparseMapMatrix(self.constraintsRef())
-    #        # make a copy because it will be overwritten
-    #    else:
-    #        self.C1 = self.constraints()
-
-    #    self.C = pg.matrix.RepeatDMatrix(self.C1, 6)
-    #    self.setConstraints(self.C)
 
 class FatrayDijkstraModellingInterpolate(TravelTimeDijkstraModelling):
     """Shortest-path (Dijkstra) based travel time with fat ray jacobian."""

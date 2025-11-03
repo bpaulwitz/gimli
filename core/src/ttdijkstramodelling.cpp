@@ -694,32 +694,30 @@ TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(Mesh & mesh, Data
 TravelTimeDijkstraModellingTTI::~TravelTimeDijkstraModellingTTI() { }
 
 RVector TravelTimeDijkstraModellingTTI::response(const RVector & combined_model) {
-    RVector velP0, epsilon, delta, symmX, symmY, symmZ;
-    assert(combined_model.size() % 6 == 0);
-    int paramSize = combined_model.size() / 6;
+    RVector velP0, epsilon, delta, incl, azim;
+    assert(combined_model.size() % 5 == 0);
+    int paramSize = combined_model.size() / 5;
 
     velP0.resize(paramSize);
     epsilon.resize(paramSize);
     delta.resize(paramSize);
-    symmX.resize(paramSize);
-    symmY.resize(paramSize);
-    symmZ.resize(paramSize);
+    incl.resize(paramSize);
+    azim.resize(paramSize);
 
     // copy data (only works without bound check in subscription operator see Vector::copy_)
     std::copy(&combined_model[0], &combined_model[paramSize], &velP0[0]);
     std::copy(&combined_model[paramSize], &combined_model[2 * paramSize], &epsilon[0]);
     std::copy(&combined_model[2 * paramSize], &combined_model[3 * paramSize], &delta[0]);
-    std::copy(&combined_model[3 * paramSize], &combined_model[4 * paramSize], &symmX[0]);
-    std::copy(&combined_model[4 * paramSize], &combined_model[5 * paramSize], &symmY[0]);
-    std::copy(&combined_model[5 * paramSize], &combined_model[6 * paramSize], &symmZ[0]);
+    std::copy(&combined_model[3 * paramSize], &combined_model[4 * paramSize], &incl[0]);
+    std::copy(&combined_model[4 * paramSize], &combined_model[5 * paramSize], &azim[0]);
 
     // call actual function
-    return this->response(velP0, epsilon, delta, symmX, symmY, symmZ);
+    return this->response(velP0, epsilon, delta, incl, azim);
 }
 
 
 RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVector & epsilon,
-    const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+    const RVector & delta, const RVector & incl, const RVector & azim) {
 
     if (background_ < TOLERANCE) {
         std::cout << "Background: " << background_ << "->" << 1e16 << std::endl;
@@ -729,11 +727,10 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVe
     RVector velPerCell(this->createMappedModel(vel0, background_));
     RVector epsPerCell(this->createMappedModel(epsilon, background_));
     RVector delPerCell(this->createMappedModel(delta, background_));
-    RVector symmXPerCell(this->createMappedModel(symmX, background_));
-    RVector symmYPerCell(this->createMappedModel(symmY, background_));
-    RVector symmZPerCell(this->createMappedModel(symmZ, background_));
+    RVector inclPerCell(this->createMappedModel(incl, background_));
+    RVector azimPerCell(this->createMappedModel(azim, background_));
 
-    dijkstra_.setGraph(createGraph(velPerCell, epsPerCell, delPerCell, symmXPerCell, symmYPerCell, symmZPerCell));
+    dijkstra_.setGraph(createGraph(velPerCell, epsPerCell, delPerCell, inclPerCell, azimPerCell));
 
     Index nShots = shotNodeId_.size();
     Index nRecei = receNodeId_.size();
@@ -760,53 +757,84 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVe
 }
 
 void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & combined_model) {
-    RVector velP0, epsilon, delta, symmX, symmY, symmZ;
-    assert(combined_model.size() % 6 == 0);
-    int paramSize = combined_model.size() / 6;
+    RVector velP0, epsilon, delta, incl, azim;
+    assert(combined_model.size() % 5 == 0);
+    int paramSize = combined_model.size() / 5;
 
     velP0.resize(paramSize);
     epsilon.resize(paramSize);
     delta.resize(paramSize);
-    symmX.resize(paramSize);
-    symmY.resize(paramSize);
-    symmZ.resize(paramSize);
+    incl.resize(paramSize);
+    azim.resize(paramSize);
 
     // copy data (only works without bound check in subscription operator see Vector::copy_)
     std::copy(&combined_model[0], &combined_model[paramSize], &velP0[0]);
     std::copy(&combined_model[paramSize], &combined_model[2 * paramSize], &epsilon[0]);
     std::copy(&combined_model[2 * paramSize], &combined_model[3 * paramSize], &delta[0]);
-    std::copy(&combined_model[3 * paramSize], &combined_model[4 * paramSize], &symmX[0]);
-    std::copy(&combined_model[4 * paramSize], &combined_model[5 * paramSize], &symmY[0]);
-    std::copy(&combined_model[5 * paramSize], &combined_model[6 * paramSize], &symmZ[0]);
+    std::copy(&combined_model[3 * paramSize], &combined_model[4 * paramSize], &incl[0]);
+    std::copy(&combined_model[4 * paramSize], &combined_model[5 * paramSize], &azim[0]);
 
     // call actual function
-    this->createJacobian(velP0, epsilon, delta, symmX, symmY, symmZ);
+    this->createJacobian(velP0, epsilon, delta, incl, azim);
 }
 
 void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const RVector & epsilon,
-    const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+    const RVector & delta, const RVector & incl, const RVector & azim) {
     this->createJacobian(*dynamic_cast < RSparseMapMatrix * > (this->jacobian_),
-                         velP0, epsilon, delta, symmX, symmY, symmZ);
+                         velP0, epsilon, delta, incl, azim);
 }
 
-double ttiToSlowness(double V0, double epsilon, double delta, double symmX, double symmY, double symmZ,
+double ttiToSlowness3D(double V0, double epsilon, double delta, double incl, double azim,
         double pathX, double pathY, double pathZ) {
 
-    double theta;
-    double dot = symmX * pathX + symmY * pathY + symmZ * pathZ;
-    double symmLen = std::sqrt(symmX * symmX + symmY * symmY + symmZ * symmZ);
+    // TODO if mesh_.dim() == 3:
     double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
-    double divisor = symmLen * vecPathLen;
 
+    double cosIncl = std::cos(incl);
+    double cosAzim = std::cos(azim);
+    double sinIncl = std::sin(incl);
+    double sinAzim = std::sin(azim);
+
+    double cosTheta = (pathX * cosIncl * cosAzim - pathY * sinAzim + pathZ * sinIncl * cosAzim) / vecPathLen;
+
+    double theta;
     // Avoid division by zero if symmLen or vecPathLen is zero
-    if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
+    if (vecPathLen < TOLERANCE) {
         theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
     } else {
-        theta = std::acos(dot / divisor);
+        theta = std::acos(cosTheta);
     }
 
     double sinThetaSq = std::sin(theta) * std::sin(theta);
-    double cosThetaSq = std::cos(theta) * std::cos(theta);
+    double cosThetaSq = cosTheta * cosTheta;
+
+    double substA = 0.5 + epsilon * sinThetaSq;
+    double substB = 2. * sinThetaSq * cosThetaSq;
+    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
+
+    double lambdaAc = std::sqrt(substA + substC);
+    
+    return 1. / (V0 * lambdaAc);
+}
+double ttiToSlowness2D(double V0, double epsilon, double delta, double incl, double pathX, double pathY) {
+
+    double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY);
+
+    double cosIncl = std::cos(incl);
+    double sinIncl = std::sin(incl);
+
+    double cosTheta = (pathX * cosIncl + pathY * sinIncl) / vecPathLen;
+
+    double theta;
+    // Avoid division by zero if symmLen or vecPathLen is zero
+    if (vecPathLen < TOLERANCE) {
+        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+    } else {
+        theta = std::acos(cosTheta);
+    }
+
+    double sinThetaSq = std::sin(theta) * std::sin(theta);
+    double cosThetaSq = cosTheta * cosTheta;
 
     double substA = 0.5 + epsilon * sinThetaSq;
     double substB = 2. * sinThetaSq * cosThetaSq;
@@ -817,25 +845,128 @@ double ttiToSlowness(double V0, double epsilon, double delta, double symmX, doub
     return 1. / (V0 * lambdaAc);
 }
 
-void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian, const RVector & velP0, const RVector & epsilon,
-    const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+void ttiJacobianEntry3D(double V0, double epsilon, double delta, double incl, double azim, double pathX, double pathY, double pathZ,
+    double& dTdV0, double& dTdEpsilon, double& dTdDelta, double& dTdIncl, double& dTdAzim) {
 
-    // For the forward modelling part
-    //// Parameters and substitutions
-    double currentVel0, currentEpsilon, currentDelta, currentSymmX, currentSymmY, currentSymmZ;
-    double theta, sinTheta, cosTheta, sinThetaSq, cosThetaSq, substA, substB, substC, lambdaAc, currentVelP;
-    //// Intermediate variables to store some computation results
-    double dot, symmLen, vecPathLen, symmLenTimesVecLen;
-    // Partial derivatives
-    //// For VP
-    double dTdS, dTdVP, dTdV0;
-    //// For Epsilon
-    double dTdL, dLda_c, dadE, dcdE, dLdE, dTdE;
-    //// For Delta
-    double dTdc, dTdD;
-    //// For the symmetry axis
-    double dcda, dcdb, dadTheta, dbdTheta, dThetadCos, dCosdDot, dCosdSymmTimesVecLen, dSymmTimesVecLendSymmLen;
-    double dThetadSx, dThetadSy, dThetadSz, dTdSx, dTdSy, dTdSz;
+    double sinIncl = std::sin(incl);
+    double sinAzim = std::sin(azim);
+    double cosIncl = std::cos(incl);
+    double cosAzim = std::cos(azim);
+    double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
+    double cosTheta = (pathX * cosIncl * cosAzim - pathY * sinAzim + pathZ * sinIncl * cosAzim) / vecPathLen;
+                
+    // Avoid division by zero if vecPathLen is zero
+    double theta;
+    if (vecPathLen < TOLERANCE) {
+        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+    } else {
+        theta = std::acos(cosTheta);
+    }
+
+    double sinTheta = std::sin(theta);
+    double sinThetaSq = sinTheta * sinTheta;
+    double cosThetaSq = cosTheta * cosTheta;
+
+    double substA = 0.5 + epsilon * sinThetaSq;
+    double substB = 2. * sinThetaSq * cosThetaSq;
+    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
+
+    double lambdaAc = std::sqrt(substA + substC);
+
+    double VP = V0 * lambdaAc;
+
+    // partial derivatives of velocity model parameters
+    //// V0
+    double dTdS = vecPathLen;
+    double dTdVP = -dTdS / (VP * VP);
+    dTdV0 = dTdVP * lambdaAc;
+
+    //// Epsilon
+    double dTdL = dTdVP * V0;
+    double dLda_c = 1. / (2. * lambdaAc);
+    double dadE = sinThetaSq;
+    double dcdE = (2. * substA * sinThetaSq - substB) / (2. * substC);
+    double dLdE = (dLda_c * dadE) + (dLda_c * dcdE);
+    dTdEpsilon = dTdL * dLdE;
+
+    //// Delta
+    double dTdc = dTdL * dLda_c;
+    dTdDelta = dTdc * (substB / (2. * substC));
+
+    //// incl and azim
+    double dcda = substA / substC;
+    double dcdb = (delta - epsilon) / (2. * substC);
+    double dadTheta = 2. * epsilon * sinTheta * cosTheta;
+    double dbdTheta = 4. * ((sinTheta * cosThetaSq * cosTheta) - (sinThetaSq * sinTheta * cosTheta));
+    double dThetadk = -1. / std::sqrt(1. - cosThetaSq);
+    double dkdIncl = -(pathX * sinIncl * cosAzim - pathZ * cosIncl * cosAzim) / vecPathLen;
+    double dkdAzim = -(pathX * cosIncl * sinAzim + pathY * cosAzim + pathZ * sinIncl * sinAzim) / vecPathLen;
+    double dadk = dadTheta * dThetadk;
+    double dbdk = dbdTheta * dThetadk;
+    dTdIncl = dTdL * (dLda_c * dadk * dkdIncl + dLda_c * (dcda * dadk * dkdIncl + dcdb * dbdk * dkdIncl));
+    dTdAzim = dTdL * (dLda_c * dadk * dkdAzim + dLda_c * (dcda * dadk * dkdAzim + dcdb * dbdk * dkdAzim));
+}
+
+void ttiJacobianEntry2D(double V0, double epsilon, double delta, double incl, double pathX, double pathY,
+    double& dTdV0, double& dTdEpsilon, double& dTdDelta, double& dTdIncl) {
+
+    double sinIncl = std::sin(incl);
+    double cosIncl = std::cos(incl);
+    double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY);
+    double cosTheta = (pathX * cosIncl + pathY * sinIncl) / vecPathLen;
+                
+    // Avoid division by zero if vecPathLen is zero
+    double theta;
+    if (vecPathLen < TOLERANCE) {
+        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+    } else {
+        theta = std::acos(cosTheta);
+    }
+
+    double sinTheta = std::sin(theta);
+    double sinThetaSq = sinTheta * sinTheta;
+    double cosThetaSq = cosTheta * cosTheta;
+
+    double substA = 0.5 + epsilon * sinThetaSq;
+    double substB = 2. * sinThetaSq * cosThetaSq;
+    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
+
+    double lambdaAc = std::sqrt(substA + substC);
+
+    double VP = V0 * lambdaAc;
+
+    // partial derivatives of velocity model parameters
+    //// V0
+    double dTdS = vecPathLen;
+    double dTdVP = -dTdS / (VP * VP);
+    dTdV0 = dTdVP * lambdaAc;
+
+    //// Epsilon
+    double dTdL = dTdVP * V0;
+    double dLda_c = 1. / (2. * lambdaAc);
+    double dadE = sinThetaSq;
+    double dcdE = (2. * substA * sinThetaSq - substB) / (2. * substC);
+    double dLdE = (dLda_c * dadE) + (dLda_c * dcdE);
+    dTdEpsilon = dTdL * dLdE;
+
+    //// Delta
+    double dTdc = dTdL * dLda_c;
+    dTdDelta = dTdc * (substB / (2. * substC));
+
+    //// incl
+    double dcda = substA / substC;
+    double dcdb = (delta - epsilon) / (2. * substC);
+    double dadTheta = 2. * epsilon * sinTheta * cosTheta;
+    double dbdTheta = 4. * (sinTheta * cosThetaSq * cosTheta - sinThetaSq * sinTheta * cosTheta);
+    double dThetadk = -1. / std::sqrt(1. - cosThetaSq);
+    double dkdIncl = (pathY * cosIncl - pathX * sinIncl) / vecPathLen;
+    double dadk = dadTheta * dThetadk;
+    double dbdk = dbdTheta * dThetadk;
+    dTdIncl = dTdL * (dLda_c * dadk * dkdIncl + dLda_c * (dcda * dadk * dkdIncl + dcdb * dbdk * dkdIncl));
+}
+
+void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian, const RVector & velP0, const RVector & epsilon,
+    const RVector & delta, const RVector & incl, const RVector & azim) {
 
     if (min(this->mesh_->cellMarkers()) < 0){
         log(Warning, "There are cells with marker -1. "
@@ -850,18 +981,16 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
     double sumVp0 = 0.;
     double sumEps = 0.;
     double sumDel = 0.;
-    double sumSx = 0.;
-    double sumSy = 0.;
-    double sumSz = 0.;
+    double sumIncl = 0.;
+    double sumAzim = 0.;
 
     RVector velPerCell(this->createMappedModel(velP0, background_));
     RVector epsPerCell(this->createMappedModel(epsilon, background_));
     RVector delPerCell(this->createMappedModel(delta, background_));
-    RVector symmXPerCell(this->createMappedModel(symmX, background_));
-    RVector symmYPerCell(this->createMappedModel(symmY, background_));
-    RVector symmZPerCell(this->createMappedModel(symmZ, background_));
+    RVector inclPerCell(this->createMappedModel(incl, background_));
+    RVector azimPerCell(this->createMappedModel(azim, background_));
 
-    dijkstra_.setGraph(createGraph(velPerCell, epsPerCell, delPerCell, symmXPerCell, symmYPerCell, symmZPerCell));
+    dijkstra_.setGraph(createGraph(velPerCell, epsPerCell, delPerCell, inclPerCell, azimPerCell));
 
     Index nShots = shotNodeId_.size();
     Index nRecei = receNodeId_.size();
@@ -870,7 +999,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 
     jacobian.clear();
     jacobian.setRows(nData);
-    jacobian.setCols(nModel * 6);
+    jacobian.setCols(nModel * 5);
 
     //** for each shot: vector<  way(shot->geoph) >;
     wayMatrix_.clear();
@@ -925,16 +1054,28 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 
             auto cellIDs = way.cellIDs();
             for (const auto &iCD : cellIDs){
-                double cellSlowness = ttiToSlowness(
-                    velPerCell[iCD],
-                    epsPerCell[iCD],
-                    delPerCell[iCD],
-                    symmXPerCell[iCD], 
-                    symmYPerCell[iCD], 
-                    symmZPerCell[iCD], 
-                    vecPath.x(),
-                    vecPath.y(),
-                    vecPath.z());
+                double cellSlowness;
+                if (mesh_->dim() == 3) {
+                    cellSlowness = ttiToSlowness3D(
+                        velPerCell[iCD],
+                        epsPerCell[iCD],
+                        delPerCell[iCD],
+                        inclPerCell[iCD], 
+                        azimPerCell[iCD], 
+                        vecPath.x(),
+                        vecPath.y(),
+                        vecPath.z());
+                }
+                else {
+                    cellSlowness = ttiToSlowness2D(
+                        velPerCell[iCD],
+                        epsPerCell[iCD],
+                        delPerCell[iCD],
+                        inclPerCell[iCD], 
+                        vecPath.x(),
+                        vecPath.y());
+
+                }
                 wayCellSlowness.push_back(cellSlowness);
                 wayCellIDs.push_back(iCD);
 
@@ -951,114 +1092,73 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                 }
             }
 
+            double scaleEntry = 1. / neighborCells.size();
+
             for (std::size_t i = 0; i < neighborCells.size(); i++) {
                 const auto c = neighborCells[i];
                 const auto cellID = neighborCellIDs[i];
-
-                // get TTI parameters for current cell
-                currentVel0 = velPerCell[cellID];
-                currentEpsilon = epsPerCell[cellID];
-                currentDelta = delPerCell[cellID];
-                currentSymmX = symmXPerCell[cellID];
-                currentSymmY = symmYPerCell[cellID];
-                currentSymmZ = symmZPerCell[cellID];
-
-                // compute phase angle theta
-                dot = currentSymmX * vecPath.x() + currentSymmY * vecPath.y() + currentSymmZ * vecPath.z();
-                symmLen = std::sqrt(currentSymmX * currentSymmX + currentSymmY * currentSymmY + currentSymmZ * currentSymmZ);
-                vecPathLen = std::sqrt(vecPath.x() * vecPath.x() + vecPath.y() * vecPath.y() + vecPath.z() * vecPath.z());
-                symmLenTimesVecLen = symmLen * vecPathLen;
-                cosTheta = dot / symmLenTimesVecLen;
                 
-                // Avoid division by zero if symmLen or vecPathLen is zero
-                if (symmLen < TOLERANCE || vecPathLen < TOLERANCE) {
-                    theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
-                } else {
-                    theta = std::acos(dot / symmLenTimesVecLen);
+                double dTdV0, dTdEpsilon, dTdDelta, dTdIncl, dTdAzim;
+                
+                if (mesh_->dim() == 3) {
+                    ttiJacobianEntry3D(
+                        velPerCell[cellID],
+                        epsPerCell[cellID],
+                        delPerCell[cellID],
+                        inclPerCell[cellID],
+                        azimPerCell[cellID],
+                        vecPath.x(),
+                        vecPath.y(),
+                        vecPath.z(),
+                        dTdV0,
+                        dTdEpsilon,
+                        dTdDelta,
+                        dTdIncl,
+                        dTdAzim);
+                }
+                else {
+                    ttiJacobianEntry2D(
+                        velPerCell[cellID],
+                        epsPerCell[cellID],
+                        delPerCell[cellID],
+                        inclPerCell[cellID],
+                        vecPath.x(),
+                        vecPath.y(),
+                        dTdV0,
+                        dTdEpsilon,
+                        dTdDelta,
+                        dTdIncl);
+                    dTdAzim = 0.0;
                 }
 
-                sinTheta = std::sin(theta);
-                sinThetaSq = sinTheta * sinTheta;
-                cosThetaSq = cosTheta * cosTheta;
-
-                substA = 0.5 + currentEpsilon * sinThetaSq;
-                substB = 2. * sinThetaSq * cosThetaSq;
-                substC = std::sqrt((substA * substA) + substB * (currentDelta - currentEpsilon));
-
-                lambdaAc = std::sqrt(substA + substC);
-
-                currentVelP = currentVel0 * lambdaAc;
-
-                // partial derivatives of velocity model parameters
-                //// V0
-                dTdS = edgeLength / neighborCells.size();
-                dTdVP = -dTdS / (currentVelP * currentVelP);
-                dTdV0 = dTdVP * lambdaAc;
-
-                //// Epsilon
-                dTdL = dTdVP * currentVel0;
-                dLda_c = 1. / (2. * lambdaAc);
-                dadE = sinThetaSq;
-                dcdE = (2. * substA * sinThetaSq - substB) / (2. * substC);
-                dLdE = (dLda_c * dadE) + (dLda_c * dcdE);
-                dTdE = dTdL * dLdE;
-
-                //// Delta
-                dTdc = dTdL / (2. * lambdaAc);
-                dTdD = dTdc * (substB / (2. * substC));
-
-                //// Symmetry axis
-                dcda = substA / substC;
-                dcdb = (currentDelta - currentEpsilon) / (2. * substC);
-                dadTheta = 2. * currentEpsilon * sinTheta * cosTheta;
-                dbdTheta = 4. * ((sinTheta * cosTheta * cosThetaSq) - (sinTheta * sinThetaSq * cosTheta));
-                dThetadCos = -1 / std::sqrt(1 - (cosTheta * cosTheta));
-                dCosdDot = 1. / symmLenTimesVecLen;
-                dCosdSymmTimesVecLen = -dot / (symmLenTimesVecLen * symmLenTimesVecLen);
-                dSymmTimesVecLendSymmLen = vecPathLen;
-                dThetadSx = dThetadCos * (dCosdDot * vecPath.x() + dCosdSymmTimesVecLen *
-                                    dSymmTimesVecLendSymmLen * (currentSymmX / symmLen));
-                dThetadSy = dThetadCos * (dCosdDot * vecPath.y() + dCosdSymmTimesVecLen *
-                                    dSymmTimesVecLendSymmLen * (currentSymmY / symmLen));
-                dThetadSz = dThetadCos * (dCosdDot * vecPath.z() + dCosdSymmTimesVecLen *
-                                    dSymmTimesVecLendSymmLen * (currentSymmZ / symmLen));
-                dTdSx = dTdL * (dLda_c * dadTheta * dThetadSx + (dLda_c * ((dcda * dadTheta * dThetadSx) + (dcdb * dbdTheta * dThetadSx))));
-                dTdSy = dTdL * (dLda_c * dadTheta * dThetadSy + (dLda_c * ((dcda * dadTheta * dThetadSy) + (dcdb * dbdTheta * dThetadSy))));
-                dTdSz = dTdL * (dLda_c * dadTheta * dThetadSz + (dLda_c * ((dcda * dadTheta * dThetadSz) + (dcdb * dbdTheta * dThetadSz))));
-
                 // entry for P-wave velocity
-                jacobian[dataIdx][c->marker()] += dTdV0;
+                jacobian[dataIdx][c->marker()] += dTdV0 * scaleEntry;
 
                 // entry for epsilon
-                jacobian[dataIdx][c->marker() + nModel] += dTdE;
+                jacobian[dataIdx][c->marker() + nModel] += dTdEpsilon * scaleEntry;
 
                 // entry for delta
-                jacobian[dataIdx][c->marker() + 2 * nModel] += dTdD;
+                jacobian[dataIdx][c->marker() + 2 * nModel] += dTdDelta * scaleEntry;
 
-                // entry for x component of symmetry axis orientation
-                jacobian[dataIdx][c->marker() + 3 * nModel] += dTdSx;
+                // entry for inclination of symmetry axis
+                jacobian[dataIdx][c->marker() + 3 * nModel] += dTdIncl * scaleEntry;
 
-                // entry for y component of symmetry axis orientation
-                jacobian[dataIdx][c->marker() + 4 * nModel] += dTdSy;
-
-                // entry for z component of symmetry axis orientation
-                jacobian[dataIdx][c->marker() + 5 * nModel] += dTdSz;
+                // entry for azimuth of symmetry axis
+                jacobian[dataIdx][c->marker() + 4 * nModel] += dTdAzim * scaleEntry;
 
                 sumVp0 += std::abs(dTdV0);
-                sumEps += std::abs(dTdE);
-                sumDel += std::abs(dTdD);
-                sumSx += std::abs(dTdSx);
-                sumSy += std::abs(dTdSy);
-                sumSz += std::abs(dTdSz);
+                sumEps += std::abs(dTdEpsilon);
+                sumDel += std::abs(dTdDelta);
+                sumIncl += std::abs(dTdIncl);
+                sumAzim += std::abs(dTdAzim);
             }
         }
     }
     std::cout << std::endl << "Sum abs vp0: " << sumVp0 << std::endl;
     std::cout << "Sum abs eps: " << sumEps << std::endl;
     std::cout << "Sum abs del: " << sumDel << std::endl;
-    std::cout << "Sum abs Sx: " << sumSx << std::endl;
-    std::cout << "Sum abs Sy: " << sumSy << std::endl;
-    std::cout << "Sum abs Sz: " << sumSz << std::endl;
+    std::cout << "Sum abs incl: " << sumIncl << std::endl;
+    std::cout << "Sum abs azim: " << sumAzim << std::endl;
 
     if (this->verbose()){
         std::cout << "/" << swatch.duration(true) << " ";
@@ -1067,7 +1167,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
 }
 
 void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
-        double delta, double symmX, double symmY, double symmZ){
+        double delta, double incl, double azim, bool is3D){
 
     double slowness;
     RVector3 vecPath; // vector between two nodes
@@ -1094,7 +1194,12 @@ void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
             // compute wavefront path
             vecPath = ni[k]->pos() - ni[j]->pos();
             // compute slowness
-            slowness = ttiToSlowness(vel0, epsilon, delta, symmX, symmY, symmZ, vecPath.x(), vecPath.y(), vecPath.z());
+            if (is3D) {
+                slowness = ttiToSlowness3D(vel0, epsilon, delta, incl, azim, vecPath.x(), vecPath.y(), vecPath.z());
+            }
+            else {
+                slowness = ttiToSlowness2D(vel0, epsilon, delta, incl, vecPath.x(), vecPath.y());
+            }
 
             fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
         }
@@ -1102,15 +1207,14 @@ void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
 }
 
 Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, const RVector & epsPerCell,
-    const RVector & delPerCell, const RVector & symmXPerCell, const RVector & symmYPerCell, const RVector & symmZPerCell) {
+    const RVector & delPerCell, const RVector & inclPerCell, const RVector & azimPerCell) {
 
     Graph graph;
     mesh_->createNeighborInfos();
 
     for (Index i = 0; i < mesh_->cellCount(); i ++) {
         Cell & c = mesh_->cell(i);
-        fillGraph_(graph, c, velPerCell[c.id()], epsPerCell[c.id()], delPerCell[c.id()], symmXPerCell[c.id()], 
-                             symmYPerCell[c.id()], symmZPerCell[c.id()]);
+        fillGraph_(graph, c, velPerCell[c.id()], epsPerCell[c.id()], delPerCell[c.id()], inclPerCell[c.id()], azimPerCell[c.id()], mesh_->dim() == 3);
     }
 
     if (graph.size() < mesh_->nodeCount()){
@@ -1122,18 +1226,17 @@ Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, co
 }
 
 RVector TravelTimeDijkstraModellingTTI::paramsToCombinedModel(const RVector & velP, const RVector & epsilon,
-        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ) {
+        const RVector & delta, const RVector & incl, const RVector & azim) {
     size_t paramSize = velP.size();
 
-    RVector model = RVector(paramSize * 6);
+    RVector model = RVector(paramSize * 5);
 
     // copy data (only works without bound check in subscription operator see Vector::copy_)
     std::copy(&velP[0], &velP[paramSize], &model[0]);
     std::copy(&epsilon[0], &epsilon[paramSize], &model[paramSize]);
     std::copy(&delta[0], &delta[paramSize], &model[2 * paramSize]);
-    std::copy(&symmX[0], &symmX[paramSize], &model[3 * paramSize]);
-    std::copy(&symmY[0], &symmY[paramSize], &model[4 * paramSize]);
-    std::copy(&symmZ[0], &symmZ[paramSize], &model[5 * paramSize]);
+    std::copy(&incl[0], &incl[paramSize], &model[3 * paramSize]);
+    std::copy(&azim[0], &azim[paramSize], &model[4 * paramSize]);
 
     return model;
 }

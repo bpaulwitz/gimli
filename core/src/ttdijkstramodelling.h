@@ -258,23 +258,23 @@ public:
 
     // response function. Takes TTI velocity model and computes slowness to use base response.
     virtual RVector response(const RVector & velP, const RVector & epsilon,
-        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+        const RVector & delta, const RVector & incl, const RVector & azim);
 
     /*! Interface. */
     virtual void createJacobian(const RVector & combined_model);
 
     // computes the Jacobian
     virtual void createJacobian(const RVector & velP, const RVector & epsilon,
-        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+        const RVector & delta, const RVector & incl, const RVector & azim);
 
     virtual void createJacobian(RSparseMapMatrix & jacobian, const RVector & velP, const RVector & epsilon,
-        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+        const RVector & delta, const RVector & incl, const RVector & azim);
 
     virtual Graph createGraph(const RVector & velPerCell, const RVector & epsPerCell,
-        const RVector & delPerCell, const RVector & symmXPerCell, const RVector & symmYPerCell, const RVector & symmZPerCell);
+        const RVector & delPerCell, const RVector & inclPerCell, const RVector & azimPerCell);
 
     virtual RVector paramsToCombinedModel(const RVector & velP, const RVector & epsilon,
-        const RVector & delta, const RVector & symmX, const RVector & symmY, const RVector & symmZ);
+        const RVector & delta, const RVector & incl, const RVector & azim);
 };
 
 } //namespace GIMLI
