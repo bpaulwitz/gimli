@@ -214,7 +214,6 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         self.regionManager().addRegion(2, self.m2, 0)
         self.regionManager().addRegion(3, self.m3, 0)
         self.regionManager().addRegion(4, self.m4, 0)
-        self.regionManager().addRegion(5, self.m4, 0)
 
     def modelToParams(self, model):
         model = np.array(model)
