@@ -174,7 +174,7 @@ class TravelTimeManager(MeshMethodManager):
         """
         verbose = kwargs.pop('verbose', self.verbose)
 
-        tti_model = kwargs.pop("tti_model", None)
+        ttiModel = kwargs.pop("ttiModel", None)
 
         fop = self.fop
         scheme = scheme or self.data
@@ -187,12 +187,12 @@ class TravelTimeManager(MeshMethodManager):
         if vel is not None:
             slowness = 1/vel
 
-        if (self.useTTI is None and slowness is None) and (self.useTTI and tti_model is None):
+        if (self.useTTI is None and slowness is None) and (self.useTTI and ttiModel is None):
             pg.critical("Need some slowness (isotropic model) or velocity distribution (TTI) for"
                         " simulation.")
 
-        if self.useTTI and tti_model is not None:
-            t = fop.response(tti_model)
+        if self.useTTI and ttiModel is not None:
+            t = fop.response(ttiModel)
             if verbose:
                 print('min/max t:', min(t), max(t))
         elif len(slowness) == self.fop.mesh().cellCount():

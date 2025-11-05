@@ -151,51 +151,25 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         # self.createJacobian = self.dijkstra.createJacobian
         self.setJacobian(self._core.jacobian())
 
-    '''
-    def createJacobian(self, V0, epsilon, delta, symmX, symmY, symmZ):
-        """Create Jacobian (way matrix)."""
-        if not self.mesh():
-            pg.critical("no mesh")
-        return self._core.createJacobian(V0, epsilon, delta, symmX, symmY, symmZ)
-    '''
-
     def createJacobian(self, model):
         """Create Jacobian (way matrix)."""
         if not self.mesh():
             pg.critical("no mesh")
         return self._core.createJacobian(model)
     
-    def jacobian(self):
-        return self._core.jacobian()
-
-    '''
-    def response(self, V0, epsilon, delta, symmX, symmY, symmZ):
-        """Return forward response (simulated traveltimes)."""
-        if not self.mesh():
-            pg.critical("no mesh")
-        return self._core.response(V0, epsilon, delta, symmX, symmY, symmZ)
-    '''
-
     def response(self, model):
         """Return forward response (simulated traveltimes)."""
         if not self.mesh():
             pg.critical("no mesh")
         return self._core.response(model)
 
-    def paramsToModel(self, V0, epsilon, delta, incl, azim):
-        return self._core.paramsToCombinedModel(V0, epsilon, delta, incl, azim)
-
-    def setMesh(self, mesh, ignoreRegionManager: bool = False):
-        """ Set mesh and specify whether region manager can be ignored.
+    def setMesh(self, mesh, **kwargs):
+        """ Set mesh.
+        Note: the argument 'igrnoreRegionManager' that can be found in the isotropic TravelTimeDijkstraModelling class can't be used here, because the RegionManager always needs to be used!
         """
-        # pg._b('setMesh', id(mesh), mesh, ignoreRegionManager)
         # keep a copy, just in case
         self._baseMesh = mesh
         self._baseMesh["marker"] = 0
-
-        if ignoreRegionManager is True:
-            pg.warn("Warning: TravelTimeDijkstraModellingTTI.setMesh(mesh, ignoreRegionManager) was run with ignoreRegionManager=True. This is not possible because the region manager needs to account for the additional parameters in the TTI case. Setting ignoreRegionManager to False...")
-            ignoreRegionManager = False
 
         self._regionManagerInUse = True
 
@@ -215,7 +189,17 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         self.regionManager().addRegion(3, self.m3, 0)
         self.regionManager().addRegion(4, self.m4, 0)
 
+    def paramsToModel(self, V0, epsilon, delta, incl, azim):
+        """
+        Takes the TTI parameters (V0: acoustic P-wave velocity, epsilon and delta: Thomsen parameters, inclination and azimuth of the symmetry axis) and
+        joins them together to a single model vector.
+        """
+        return self._core.paramsToCombinedModel(V0, epsilon, delta, incl, azim)
+
     def modelToParams(self, model):
+        """
+        Takes a single TTI model vector and splits it up into the individual parameters.
+        """
         model = np.array(model)
         assert(model.shape[0] % 5 == 0)
         paramLength = model.shape[0] // 5
@@ -228,7 +212,7 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
         return vp0, eps, delta, incl, azim
 
     def createStartModel(self, dataVals):
-        """Create a starting model from data values (gradient or constant)."""
+        """Create an isotropic starting model from data values (gradient or constant P-wave velocity)."""
         sm = None
 
         if self._useGradient is not None:
@@ -246,11 +230,11 @@ class TravelTimeDijkstraModellingTTI(TravelTimeDijkstraModelling):
             v0 = np.array(pg.Vector(self.regionManager().parameterCount() // 6,
                            pg.math.median(aVel)))
 
-        # make sure to have the starting model values not zero as it leads to NaN in phiM otherwise!
-        eps = np.zeros_like(v0, dtype=np.float32) + 0.000001
-        delta = np.zeros_like(v0, dtype=np.float32) + 0.000001
-        incl = np.zeros_like(v0, dtype=np.float32) + 0.000001
-        azim = np.zeros_like(v0, dtype=np.float32) + 0.000001
+        # make sure to have the starting model values not exactly zero as it leads to NaN in phiM otherwise!
+        eps = np.zeros_like(v0, dtype=np.float64) + 0.000001
+        delta = np.zeros_like(v0, dtype=np.float64) + 0.000001
+        incl = np.zeros_like(v0, dtype=np.float64) + 0.5 * np.pi + 0.000001
+        azim = np.zeros_like(v0, dtype=np.float64) + 0.000001
 
         sm = self.paramsToModel(v0, eps, delta, incl, azim)
 

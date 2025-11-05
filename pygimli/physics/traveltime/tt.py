@@ -11,16 +11,19 @@ Manager = TravelTimeManager  # convenience alias
 
 
 def simulate(mesh, scheme, slowness=None, **kwargs):
-    """Simulate traveltime data."""
+    """Simulate traveltime data.
+    Use the argument ttiModel (RVector3 or np.ndarray) if you want to compute the traveltimes for an Transversally Tilted Isotropic (TTI) model.
+    See pg.physics.traveltime.modelling.TravelTimeDijkstraModellingTTI.paramsToModel(...) to obtain such a TTI model.
+    """
 
-    tti_model = kwargs.pop("tti_model", None)
+    ttiModel = kwargs.pop("ttiModel", None)
     
-    if tti_model is not None:
+    if ttiModel is not None:
         mgr = TravelTimeManager(TTI=True)
     else:
         mgr = TravelTimeManager()
     
-    return mgr.simulate(mesh=mesh, scheme=scheme, slowness=slowness, tti_model=tti_model, **kwargs)
+    return mgr.simulate(mesh=mesh, scheme=scheme, slowness=slowness, ttiModel=ttiModel, **kwargs)
 
 
 simulate.__doc__ = TravelTimeManager.simulate.__doc__
