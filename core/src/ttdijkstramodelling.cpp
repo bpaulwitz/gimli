@@ -795,7 +795,7 @@ double ttiToSlowness3D(double V0, double epsilon, double delta, double incl, dou
     double sinIncl = std::sin(incl);
     double sinAzim = std::sin(azim);
 
-    double cosTheta = (pathX * cosIncl * cosAzim - pathY * sinAzim + pathZ * sinIncl * cosAzim) / vecPathLen;
+    double cosTheta = (pathX * sinIncl * cosAzim + pathY * sinIncl * sinAzim - pathZ * cosIncl) / vecPathLen;
 
     double theta;
     // Avoid division by zero if symmLen or vecPathLen is zero
@@ -823,7 +823,7 @@ double ttiToSlowness2D(double V0, double epsilon, double delta, double incl, dou
     double cosIncl = std::cos(incl);
     double sinIncl = std::sin(incl);
 
-    double cosTheta = (pathX * cosIncl + pathY * sinIncl) / vecPathLen;
+    double cosTheta = (pathX * sinIncl - pathY * cosIncl) / vecPathLen;
 
     double theta;
     // Avoid division by zero if symmLen or vecPathLen is zero
@@ -853,7 +853,7 @@ void ttiJacobianEntry3D(double V0, double epsilon, double delta, double incl, do
     double cosIncl = std::cos(incl);
     double cosAzim = std::cos(azim);
     double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
-    double cosTheta = (pathX * cosIncl * cosAzim - pathY * sinAzim + pathZ * sinIncl * cosAzim) / vecPathLen;
+    double cosTheta = (pathX * sinIncl * cosAzim + pathY * sinIncl * sinAzim - pathZ * cosIncl) / vecPathLen;
                 
     // Avoid division by zero if vecPathLen is zero
     double theta;
@@ -899,8 +899,8 @@ void ttiJacobianEntry3D(double V0, double epsilon, double delta, double incl, do
     double dadTheta = 2. * epsilon * sinTheta * cosTheta;
     double dbdTheta = 4. * ((sinTheta * cosThetaSq * cosTheta) - (sinThetaSq * sinTheta * cosTheta));
     double dThetadk = -1. / std::sqrt(1. - cosThetaSq);
-    double dkdIncl = -(pathX * sinIncl * cosAzim - pathZ * cosIncl * cosAzim) / vecPathLen;
-    double dkdAzim = -(pathX * cosIncl * sinAzim + pathY * cosAzim + pathZ * sinIncl * sinAzim) / vecPathLen;
+    double dkdIncl = (pathX * cosIncl * cosAzim  + pathY * cosIncl * sinAzim + pathZ * sinIncl) / vecPathLen;
+    double dkdAzim = (-pathX * sinIncl * sinAzim + pathY * sinIncl * cosAzim) / vecPathLen;
     double dadk = dadTheta * dThetadk;
     double dbdk = dbdTheta * dThetadk;
     dTdIncl = dTdL * (dLda_c * dadk * dkdIncl + dLda_c * (dcda * dadk * dkdIncl + dcdb * dbdk * dkdIncl));
@@ -913,7 +913,7 @@ void ttiJacobianEntry2D(double V0, double epsilon, double delta, double incl, do
     double sinIncl = std::sin(incl);
     double cosIncl = std::cos(incl);
     double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY);
-    double cosTheta = (pathX * cosIncl + pathY * sinIncl) / vecPathLen;
+    double cosTheta = (pathX * sinIncl - pathY * cosIncl) / vecPathLen;
                 
     // Avoid division by zero if vecPathLen is zero
     double theta;
@@ -959,7 +959,7 @@ void ttiJacobianEntry2D(double V0, double epsilon, double delta, double incl, do
     double dadTheta = 2. * epsilon * sinTheta * cosTheta;
     double dbdTheta = 4. * (sinTheta * cosThetaSq * cosTheta - sinThetaSq * sinTheta * cosTheta);
     double dThetadk = -1. / std::sqrt(1. - cosThetaSq);
-    double dkdIncl = (pathY * cosIncl - pathX * sinIncl) / vecPathLen;
+    double dkdIncl = (pathX * cosIncl + pathY * sinIncl) / vecPathLen;
     double dadk = dadTheta * dThetadk;
     double dbdk = dbdTheta * dThetadk;
     dTdIncl = dTdL * (dLda_c * dadk * dkdIncl + dLda_c * (dcda * dadk * dkdIncl + dcdb * dbdk * dkdIncl));
