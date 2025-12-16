@@ -244,6 +244,28 @@ protected:
     the Thomsen parameters epsilon and delta as well as the orientation of the symmetry axis.
  */
 class DLLEXPORT TravelTimeDijkstraModellingTTI: public TravelTimeDijkstraModelling{
+private:
+    // 3D lookup table with epsilon as x, delta as y and phase angle theta as z dimension and group angle phi as the entries.
+    // epsilon and delta are equidistant and the nearest index can be computed with runtime complexity O(1), but phi is not equidistant, so the
+    //      runtime complexity of the access is O(stepsThetaLookup)
+    RVector anisotropyScalarLookup;
+    // lookup tables for partial derivatives
+    RVector dTdVp0Lookup, dTdEpsLookup, dTdDeltaLookup, dTdInclLookup, dTdAzimLookup;
+    // minimum and maximum values for each dimension of the lookup table
+    double minEpsLookup, minDeltaLookup, maxEpsLookup, maxDeltaLookup;
+    // amount of entries for each dimension of the lookup table
+    Index stepsEpsLookup, stepsDeltaLookup, stepsAngleLookup;
+    // increments of the entries of the lookup table: (max - min) / steps.
+    double dEpsLookup, dDeltaLookup, dAngleLookup;
+    // flag whether a lookup table has been computed
+    bool isLookupComputed;
+
+    // does a trilinear interpolation on the lookup table
+    virtual double interpolateAnisotropyScalar(double epsilon, double delta, double groupAngle);
+
+    // makes sure that the parameters lie within the lookup table and recomputes the lookup table if that is not the case
+    virtual void testRecomputeLookup(const RVector & epsilon, const RVector & delta);
+
 public: 
     // constructors
     TravelTimeDijkstraModellingTTI(bool verbose = false);
@@ -253,12 +275,23 @@ public:
     virtual ~TravelTimeDijkstraModellingTTI();
 
     /*! Interface. */
+
+    // had to move those functions into the class, as they need to access the lookup tables at some point
+    virtual void fillGraph_(Graph & graph, const Node & a, const Node & b, double slowness, SIndex leftID);
+    virtual void fillGraph_(Graph & graph, Cell & c, double slowness);
+    virtual void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon, double delta, double incl, double azim, bool is3D);
+
     // it is necessary to provide the inversion method with a single model vector, therefore it is just a concatenation of all parameters
     virtual RVector response(const RVector & combined_model);
 
     // response function. Takes TTI velocity model and computes slowness to use base response.
     virtual RVector response(const RVector & velP, const RVector & epsilon,
         const RVector & delta, const RVector & incl, const RVector & azim);
+
+    virtual double ttiToSlowness3D(double V0, double epsilon, double delta, double incl, double azim,
+        double pathX, double pathY, double pathZ);
+
+    virtual double ttiToSlowness2D(double V0, double epsilon, double delta, double incl, double pathX, double pathY);
 
     /*! Interface. */
     virtual void createJacobian(const RVector & combined_model);

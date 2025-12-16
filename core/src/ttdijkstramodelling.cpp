@@ -685,10 +685,22 @@ void TTModellingWithOffset::createJacobian(const RVector & model){
 
 TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(bool verbose)
     : TravelTimeDijkstraModelling(verbose){
+    this->dEpsLookup = 0.01;
+    this->dDeltaLookup = 0.01;
+    // 1°
+    this->dAngleLookup = M_PI / 180.;
+    this->stepsAngleLookup = std::round(0.5 * M_PI / this->dAngleLookup);
+    this->isLookupComputed = false;
 }
 
 TravelTimeDijkstraModellingTTI::TravelTimeDijkstraModellingTTI(Mesh & mesh, DataContainer & dataContainer, bool verbose) :
     TravelTimeDijkstraModelling(mesh, dataContainer, verbose) {
+    this->dEpsLookup = 0.01;
+    this->dDeltaLookup = 0.01;
+    // 1°
+    this->dAngleLookup = M_PI / 180.;
+    this->stepsAngleLookup = std::round(0.5 * M_PI / this->dAngleLookup);
+    this->isLookupComputed = false;
 }
 
 TravelTimeDijkstraModellingTTI::~TravelTimeDijkstraModellingTTI() { }
@@ -723,6 +735,9 @@ RVector TravelTimeDijkstraModellingTTI::response(const RVector & vel0, const RVe
         std::cout << "Background: " << background_ << "->" << 1e16 << std::endl;
         background_ = 1e16;
     }
+
+    // make sure the lookup table is set up
+    this->testRecomputeLookup(epsilon, delta);
 
     RVector velPerCell(this->createMappedModel(vel0, background_));
     RVector epsPerCell(this->createMappedModel(epsilon, background_));
@@ -784,65 +799,42 @@ void TravelTimeDijkstraModellingTTI::createJacobian(const RVector & velP0, const
                          velP0, epsilon, delta, incl, azim);
 }
 
-double ttiToSlowness3D(double V0, double epsilon, double delta, double incl, double azim,
+double TravelTimeDijkstraModellingTTI::ttiToSlowness3D(double V0, double epsilon, double delta, double incl, double azim,
         double pathX, double pathY, double pathZ) {
 
-    // TODO if mesh_.dim() == 3:
     double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY + pathZ * pathZ);
 
-    double cosIncl = std::cos(incl);
-    double cosAzim = std::cos(azim);
-    double sinIncl = std::sin(incl);
-    double sinAzim = std::sin(azim);
-
-    double cosTheta = (pathX * sinIncl * cosAzim + pathY * sinIncl * sinAzim - pathZ * cosIncl) / vecPathLen;
-
-    double theta;
+    double phi;
     // Avoid division by zero if symmLen or vecPathLen is zero
     if (vecPathLen < TOLERANCE) {
-        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+        phi = M_PI / 2.0; // Assume perpendicular if one vector is zero
     } else {
-        theta = std::acos(cosTheta);
+        double cosIncl = std::cos(incl);
+        double cosAzim = std::cos(azim);
+        double sinIncl = std::sin(incl);
+        double sinAzim = std::sin(azim);
+
+        phi = std::acos(-(pathX * sinIncl * cosAzim + pathY * sinIncl * sinAzim + pathZ * cosIncl) / vecPathLen);
     }
 
-    double sinThetaSq = std::sin(theta) * std::sin(theta);
-    double cosThetaSq = cosTheta * cosTheta;
-
-    double substA = 0.5 + epsilon * sinThetaSq;
-    double substB = 2. * sinThetaSq * cosThetaSq;
-    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
-
-    double lambdaAc = std::sqrt(substA + substC);
-    
-    return 1. / (V0 * lambdaAc);
+    return 1. / (this->interpolateAnisotropyScalar(epsilon, delta, phi) * V0);
 }
-double ttiToSlowness2D(double V0, double epsilon, double delta, double incl, double pathX, double pathY) {
+double TravelTimeDijkstraModellingTTI::ttiToSlowness2D(double V0, double epsilon, double delta, double incl, double pathX, double pathY) {
 
     double vecPathLen = std::sqrt(pathX * pathX + pathY * pathY);
 
-    double cosIncl = std::cos(incl);
-    double sinIncl = std::sin(incl);
-
-    double cosTheta = (pathX * sinIncl - pathY * cosIncl) / vecPathLen;
-
-    double theta;
+    double phi;
     // Avoid division by zero if symmLen or vecPathLen is zero
     if (vecPathLen < TOLERANCE) {
-        theta = M_PI / 2.0; // Assume perpendicular if one vector is zero
+        phi = M_PI * 0.5; // Assume perpendicular if one vector is zero
     } else {
-        theta = std::acos(cosTheta);
+        double cosIncl = std::cos(incl);
+        double sinIncl = std::sin(incl);
+
+        phi = std::acos(-(pathX * sinIncl + pathY * cosIncl) / vecPathLen);
     }
-
-    double sinThetaSq = std::sin(theta) * std::sin(theta);
-    double cosThetaSq = cosTheta * cosTheta;
-
-    double substA = 0.5 + epsilon * sinThetaSq;
-    double substB = 2. * sinThetaSq * cosThetaSq;
-    double substC = std::sqrt((substA * substA) + substB * (delta - epsilon));
-
-    double lambdaAc = std::sqrt(substA + substC);
-    
-    return 1. / (V0 * lambdaAc);
+                
+    return 1. / (this->interpolateAnisotropyScalar(epsilon, delta, phi) * V0);
 }
 
 void ttiJacobianEntry3D(double V0, double epsilon, double delta, double incl, double azim, double pathX, double pathY, double pathZ,
@@ -1056,7 +1048,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
             for (const auto &iCD : cellIDs){
                 double cellSlowness;
                 if (mesh_->dim() == 3) {
-                    cellSlowness = ttiToSlowness3D(
+                    cellSlowness = this->ttiToSlowness3D(
                         velPerCell[iCD],
                         epsPerCell[iCD],
                         delPerCell[iCD],
@@ -1067,7 +1059,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
                         vecPath.z());
                 }
                 else {
-                    cellSlowness = ttiToSlowness2D(
+                    cellSlowness = this->ttiToSlowness2D(
                         velPerCell[iCD],
                         epsPerCell[iCD],
                         delPerCell[iCD],
@@ -1097,7 +1089,7 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
             for (std::size_t i = 0; i < neighborCells.size(); i++) {
                 const auto c = neighborCells[i];
                 const auto cellID = neighborCellIDs[i];
-                
+
                 double dTdV0, dTdEpsilon, dTdDelta, dTdIncl, dTdAzim;
                 
                 if (mesh_->dim() == 3) {
@@ -1166,7 +1158,68 @@ void TravelTimeDijkstraModellingTTI::createJacobian(RSparseMapMatrix & jacobian,
     }
 }
 
-void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
+void TravelTimeDijkstraModellingTTI::fillGraph_(Graph & graph, const Node & a, const Node & b, double slowness, SIndex leftID){
+    if (a.id() == b.id()) return;
+
+    double dist = a.pos().distance(b.pos());
+
+    // ensure connection between 3d boundaries
+    dist = max(1e-8, dist);
+
+    double newTime = dist * slowness;
+    double oldTime = graph[a.id()][b.id()].time();
+
+    // if (V_){
+    //     __MS("a:" << a.id() << " b:"  << b.id() << " L:" << leftID << " t:" << " " << newTime << " " << oldTime)
+    // }
+
+    if (oldTime > 0.0) {
+        newTime = std::min(newTime, oldTime);
+
+        // way pair already exist so set time to min and add leftID
+
+        NodeDistMap::iterator ita(graph[a.id()].find(b.id()));
+        ita->second.cellIDs().insert(leftID);
+        ita->second.setTime(newTime);
+
+        NodeDistMap::iterator itb(graph[b.id()].find(a.id()));
+        itb->second.cellIDs().insert(leftID);
+        itb->second.setTime(newTime);
+
+    } else {
+        // first time fill
+        graph[a.id()][b.id()] = GraphDistInfo(newTime, dist, leftID);
+        graph[b.id()][a.id()] = GraphDistInfo(newTime, dist, leftID);
+    }
+}
+
+void TravelTimeDijkstraModellingTTI::fillGraph_(Graph & graph, Cell & c, double slowness){
+
+    std::vector< Node * > ni(c.nodes());
+
+    for (Index i(0); i < c.boundaryCount(); i++){
+        Boundary *b = c.boundary(i);
+        if (b){
+            for (auto & n : b->secondaryNodes()){
+                ni.push_back(n);
+            }
+        } else {
+            log(Critical, "No boundary found.");
+        }
+    }
+
+    for (auto & n : c.secondaryNodes()){
+        ni.push_back(n);
+    }
+
+    for (Index j = 0; j < ni.size()-1; j ++) {
+        for (Index k = j + 1; k < ni.size(); k ++) {
+            this->fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
+        }
+    }
+}
+
+void TravelTimeDijkstraModellingTTI::fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
         double delta, double incl, double azim, bool is3D){
 
     double slowness;
@@ -1195,13 +1248,29 @@ void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon,
             vecPath = ni[k]->pos() - ni[j]->pos();
             // compute slowness
             if (is3D) {
-                slowness = ttiToSlowness3D(vel0, epsilon, delta, incl, azim, vecPath.x(), vecPath.y(), vecPath.z());
+                slowness = this->ttiToSlowness3D(vel0, epsilon, delta, incl, azim, vecPath.x(), vecPath.y(), vecPath.z());
             }
             else {
-                slowness = ttiToSlowness2D(vel0, epsilon, delta, incl, vecPath.x(), vecPath.y());
+                slowness = this->ttiToSlowness2D(vel0, epsilon, delta, incl, vecPath.x(), vecPath.y());
             }
+            
+            /*
+            std::string log_str = "Path:\n\tA  : [" + std::to_string(ni[j]->pos().x()) + ", " + std::to_string(ni[j]->pos().y()) + ", " + std::to_string(ni[j]->pos().z()) + "]\n\t" +
+                         "B  : [" + std::to_string(ni[k]->pos().x()) + ", " + std::to_string(ni[k]->pos().y()) + ", " + std::to_string(ni[k]->pos().z()) + "]\n\t" +
+                         "B-A: [" + std::to_string(vecPath.x()) + ", " + std::to_string(vecPath.y()) + ", " + std::to_string(vecPath.z()) + "]\n\t" +
+                         "VP0: " + std::to_string(vel0) + "\n\t" +
+                         "eps: " + std::to_string(epsilon) + "\n\t" +
+                         "del: " + std::to_string(delta) + "\n\t" +
+                         "incl: " + std::to_string(incl) + "\n\t" +
+                         "azim: " + std::to_string(azim) + "\n\t" +
+                         "velocity: " + std::to_string(1 / slowness) + "\n";
+            std::cout << log_str << std::endl;
+            if (k > 10) {
+                std::exit(0);
+            }
+            */
 
-            fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
+            this->fillGraph_(graph, *ni[j], *ni[k], slowness, c.id());
         }
     }
 }
@@ -1214,7 +1283,7 @@ Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, co
 
     for (Index i = 0; i < mesh_->cellCount(); i ++) {
         Cell & c = mesh_->cell(i);
-        fillGraph_(graph, c, velPerCell[c.id()], epsPerCell[c.id()], delPerCell[c.id()], inclPerCell[c.id()], azimPerCell[c.id()], mesh_->dim() == 3);
+        this->fillGraph_(graph, c, velPerCell[c.id()], epsPerCell[c.id()], delPerCell[c.id()], inclPerCell[c.id()], azimPerCell[c.id()], mesh_->dim() == 3);
     }
 
     if (graph.size() < mesh_->nodeCount()){
@@ -1223,6 +1292,179 @@ Graph TravelTimeDijkstraModellingTTI::createGraph(const RVector & velPerCell, co
                  << graph.size() << " < " << mesh_->nodeCount() << std::endl;
     }
     return graph;
+}
+
+// this could be optimized by not recomputing the whole table but only adding the new entries, but it would involve some nasty moving operations, which I don't want to do until it is really necessary.
+void TravelTimeDijkstraModellingTTI::testRecomputeLookup(const RVector & epsilon, const RVector & delta) {
+    double minEps = 999.;
+    double maxEps = -999.;
+    double minDelta = 999.;
+    double maxDelta = -999.;
+    
+    for(Index i = 0; i < epsilon.size(); i++) {
+        minEps = minEps > epsilon[i] ? epsilon[i] : minEps;
+        maxEps = maxEps < epsilon[i] ? epsilon[i] : maxEps;
+    }
+    for(Index i = 0; i < delta.size(); i++) {
+        minDelta = minDelta > delta[i] ? delta[i] : minDelta;
+        maxDelta = maxDelta < delta[i] ? delta[i] : maxDelta;
+    }
+
+    // check if min/max of epsilon and delta lie in range of current lookup table and exit if that is the case
+    if(this->isLookupComputed && minEps >= this->minEpsLookup && maxEps <= this->maxEpsLookup &&
+        minDelta >= this->minDeltaLookup && maxDelta <= this->maxDeltaLookup) {
+            return;
+        }
+
+    // else: (re)compute larger lookup table to contain anisotropy scalars for all cases that are present in the data
+
+    // add a little bit of buffer
+    this->minEpsLookup = minEps - 20 * this->dEpsLookup;
+    this->maxEpsLookup = maxEps + 20 * this->dEpsLookup;
+    this->minDeltaLookup = minDelta - 20 * this->dDeltaLookup;
+    this->maxDeltaLookup = maxDelta + 20 * this->dDeltaLookup;
+
+    this->stepsEpsLookup = std::floor((this->maxEpsLookup - this->minEpsLookup) / this->dEpsLookup) + 1;
+    this->stepsDeltaLookup = std::floor((this->maxDeltaLookup - this->minDeltaLookup) / this->dDeltaLookup) + 1;
+
+    // adapt maximum value
+    this->maxEpsLookup = this->minEpsLookup + this->dEpsLookup * this->stepsEpsLookup;
+    this->maxDeltaLookup = this->minDeltaLookup + this->dDeltaLookup * this->stepsDeltaLookup;
+
+    std::cout << "(Re)computing lookup table for epsilon in [" << this->minEpsLookup << ", " << this->maxEpsLookup << "] and delta in [" << this->minDeltaLookup << ", " << this->maxDeltaLookup << "]...";
+
+    // resize lookup table
+    this->anisotropyScalarLookup.resize(this->stepsEpsLookup * this->stepsDeltaLookup * this->stepsAngleLookup);
+
+    // initialize the global index of the lookup table
+    Index idxLookup = 0;
+
+    // helper variables for the inner loops
+    double epsCurrent, deltaCurrent, phiCurrent, thetaCurrent, sinTheta, cosTheta, sinThetaSq, cosThetaSq;
+    double lbd_ell_sq, lbd_ac, lbd_ac_sq, lbd_big, d_lbd, gx, gz, anisotropyScalar;
+    double theta_comparison;
+    double phi_comparison;
+    double phi_comparison_last = 0.;
+
+    // fill the table
+    for(Index idxEps = 0; idxEps < this->stepsEpsLookup; idxEps++) {
+        epsCurrent =  idxEps * this->dEpsLookup + this->minEpsLookup;
+
+        for(Index idxDelta = 0; idxDelta < this->stepsDeltaLookup; idxDelta++) { 
+            deltaCurrent =  idxDelta * this->dDeltaLookup + this->minDeltaLookup;
+
+            // loop over group angle phi
+            for(Index idxPhi = 0; idxPhi < this->stepsAngleLookup; idxPhi++) {
+                phiCurrent = idxPhi * this->dAngleLookup;
+
+                // find phase angle theta that corresponds to the current group angle phi
+                if(idxPhi == 0) {
+                    theta_comparison = 0.;
+                }
+                else if(idxPhi == this->stepsAngleLookup - 1) {
+                    theta_comparison = M_PI * 0.5;
+                }
+                //// loop over phase angles and compute corresponding group angle. Interpolate if necessary.
+                else {
+                    for(Index idxTheta = 1; idxTheta < this->stepsAngleLookup - 1; idxTheta++) {
+                        thetaCurrent = idxTheta * this->dAngleLookup;
+                        sinTheta = std::sin(thetaCurrent);
+                        cosTheta = std::cos(thetaCurrent);
+                        sinThetaSq = sinTheta * sinTheta;
+                        cosThetaSq = cosTheta * cosTheta;
+
+                        // compute corresponding group angle
+                        lbd_ell_sq = 2. * epsCurrent * sinThetaSq + 1.;
+                        lbd_ac_sq = lbd_ell_sq * 0.5 + std::sqrt(lbd_ell_sq * lbd_ell_sq * 0.25 - 2. * (epsCurrent - deltaCurrent) * sinThetaSq * cosThetaSq);
+                        lbd_big = (epsCurrent + (lbd_ell_sq * epsCurrent - 2. * (epsCurrent - deltaCurrent) * std::cos(2. * thetaCurrent))) / (2. * lbd_ac_sq - lbd_ell_sq);
+                        gx = sinTheta * (lbd_ac_sq + cosThetaSq * lbd_big);
+                        gz = cosTheta * (lbd_ac_sq - sinThetaSq * lbd_big);
+                        phi_comparison = std::atan2(gx, gz);
+
+                        // interpolate phase angle that corresponds to group angle
+                        if(phi_comparison == phiCurrent) {
+                            theta_comparison = thetaCurrent;
+                            break;
+                        }
+                        else if(phi_comparison > phiCurrent) {
+                            theta_comparison = thetaCurrent - this->dAngleLookup * ((phi_comparison - phiCurrent) / (phi_comparison - phi_comparison_last));
+                            break;
+                        }
+                    }
+                }
+
+                // compute anisotropic amplification scalar
+                sinTheta = std::sin(theta_comparison);
+                cosTheta = std::cos(theta_comparison);
+                sinThetaSq = sinTheta * sinTheta;
+                cosThetaSq = cosTheta * cosTheta;
+
+                lbd_ell_sq = 2. * epsCurrent * sinThetaSq + 1.;
+                lbd_ac = std::sqrt(lbd_ell_sq * 0.5 + std::sqrt(lbd_ell_sq * lbd_ell_sq * 0.25 - 2. * (epsCurrent - deltaCurrent) * sinThetaSq * cosThetaSq));
+                lbd_ac_sq = lbd_ac * lbd_ac;
+                lbd_big = (epsCurrent + (lbd_ell_sq * epsCurrent - 2. * (epsCurrent - deltaCurrent) * std::cos(2. * theta_comparison))) / (2. * lbd_ac_sq - lbd_ell_sq);
+                d_lbd = 0.5 * std::sin(theta_comparison * 2.) / lbd_ac * lbd_big;
+
+                //anisotropyScalar = 1. / std::sqrt(lbd_ac_sq + d_lbd * d_lbd);
+                anisotropyScalar = std::sqrt(lbd_ac_sq + lbd_ac_sq * d_lbd * d_lbd);
+
+                // write into lookup table
+                this->anisotropyScalarLookup[idxLookup++] = anisotropyScalar;
+            }
+        }
+    }
+
+    std::cout << " lookup table computed!" << std::endl;
+    this->isLookupComputed = true;
+}
+
+// trilinear interpolation of lookup table
+double TravelTimeDijkstraModellingTTI::interpolateAnisotropyScalar(double epsilon, double delta, double groupAngle) {
+    // angle might be [-pi, pi], but weak anisotropy only works for [0, pi/2]
+    if(groupAngle < 0.) {
+        groupAngle = -groupAngle;
+    }
+    if(groupAngle > M_PI * 0.5) {
+        groupAngle = M_PI - groupAngle;
+    }
+
+    // boundary indices of nodes surrounding the position
+    Index idxEps1 = std::floor((epsilon - this->minEpsLookup) / this->dEpsLookup);
+    Index idxEps2 = idxEps1 + 1;
+    Index idxDelta1 = std::floor((delta - this->minDeltaLookup) / this->dDeltaLookup);
+    Index idxDelta2 = idxDelta1 + 1;
+    Index idxPhi1 = std::floor(groupAngle / this->dAngleLookup);
+    Index idxPhi2 = idxPhi1 + 1;
+
+    // relative distances from indices to position
+    double dEps = (epsilon - (idxEps1 * this->dEpsLookup + this->minEpsLookup)) / this->dEpsLookup;
+    double dDelta = (delta - (idxDelta1 * this->dDeltaLookup + this->minDeltaLookup)) / this->dDeltaLookup;
+    double dPhi = (groupAngle - (idxPhi1 * this->dAngleLookup)) / this->dAngleLookup;
+
+    // trilinear interpolation coefficients
+    double p000 = (1. - dEps) * (1. - dDelta) * (1. - dPhi);
+    double p001 = (1. - dEps) * (1. - dDelta) * dPhi;
+    double p010 = (1. - dEps) * dDelta * (1. - dPhi);
+    double p011 = (1. - dEps) * dDelta * dPhi;
+    double p100 = dEps * (1. - dDelta) * (1. - dPhi);
+    double p101 = dEps * (1. - dDelta) * dPhi;
+    double p110 = dEps * dDelta * (1. - dPhi);
+    double p111 = dEps * dDelta * dPhi;
+
+    // corresponding values in the lookup table
+    Index memoryOffsetEps = this->stepsAngleLookup * this->stepsDeltaLookup;
+    double c000 = this->anisotropyScalarLookup[idxEps1 * memoryOffsetEps + idxDelta1 * this->stepsAngleLookup + idxPhi1];
+    double c001 = this->anisotropyScalarLookup[idxEps1 * memoryOffsetEps + idxDelta1 * this->stepsAngleLookup + idxPhi2];
+    double c010 = this->anisotropyScalarLookup[idxEps1 * memoryOffsetEps + idxDelta2 * this->stepsAngleLookup + idxPhi1];
+    double c011 = this->anisotropyScalarLookup[idxEps1 * memoryOffsetEps + idxDelta2 * this->stepsAngleLookup + idxPhi2];
+    double c100 = this->anisotropyScalarLookup[idxEps2 * memoryOffsetEps + idxDelta1 * this->stepsAngleLookup + idxPhi1];
+    double c101 = this->anisotropyScalarLookup[idxEps2 * memoryOffsetEps + idxDelta1 * this->stepsAngleLookup + idxPhi2];
+    double c110 = this->anisotropyScalarLookup[idxEps2 * memoryOffsetEps + idxDelta2 * this->stepsAngleLookup + idxPhi1];
+    double c111 = this->anisotropyScalarLookup[idxEps2 * memoryOffsetEps + idxDelta2 * this->stepsAngleLookup + idxPhi2];
+
+    double interpolated = p000 * c000 + p001 * c001 + p010 * c010 + p011 * c011 + p100 * c100 + p101 * c101 + p110 * c110 + p111 * c111;
+
+    return interpolated;
 }
 
 RVector TravelTimeDijkstraModellingTTI::paramsToCombinedModel(const RVector & velP, const RVector & epsilon,
