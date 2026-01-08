@@ -246,11 +246,9 @@ protected:
 class DLLEXPORT TravelTimeDijkstraModellingTTI: public TravelTimeDijkstraModelling{
 private:
     // 3D lookup table with epsilon as x, delta as y and phase angle theta as z dimension and group angle phi as the entries.
-    // epsilon and delta are equidistant and the nearest index can be computed with runtime complexity O(1), but phi is not equidistant, so the
-    //      runtime complexity of the access is O(stepsThetaLookup)
     RVector anisotropyScalarLookup;
-    // lookup tables for partial derivatives
-    RVector dTdVp0Lookup, dTdEpsLookup, dTdDeltaLookup, dTdInclLookup, dTdAzimLookup;
+    // lookup tables for partial derivatives of anisotropy scalar
+    RVector dScaledEpsLookup, dScaledDeltaLookup, dScaledThetaLookup, dThetadPhiLookup;
     // minimum and maximum values for each dimension of the lookup table
     double minEpsLookup, minDeltaLookup, maxEpsLookup, maxDeltaLookup;
     // amount of entries for each dimension of the lookup table
@@ -261,7 +259,7 @@ private:
     bool isLookupComputed;
 
     // does a trilinear interpolation on the lookup table
-    virtual double interpolateAnisotropyScalar(double epsilon, double delta, double groupAngle);
+    virtual double interpolateLookupTable(const RVector& table, double epsilon, double delta, double groupAngle);
 
     // makes sure that the parameters lie within the lookup table and recomputes the lookup table if that is not the case
     virtual void testRecomputeLookup(const RVector & epsilon, const RVector & delta);
@@ -280,6 +278,10 @@ public:
     virtual void fillGraph_(Graph & graph, const Node & a, const Node & b, double slowness, SIndex leftID);
     virtual void fillGraph_(Graph & graph, Cell & c, double slowness);
     virtual void fillGraph_(Graph & graph, Cell & c, double vel0, double epsilon, double delta, double incl, double azim, bool is3D);
+    virtual void ttiJacobianEntry3D(double V0, double epsilon, double delta, double incl, double azim, double pathX, double pathY, double pathZ,
+        double& dTdV0, double& dTdEpsilon, double& dTdDelta, double& dTdIncl, double& dTdAzim);
+    virtual void ttiJacobianEntry2D(double V0, double epsilon, double delta, double incl, double pathX, double pathY,
+        double& dTdV0, double& dTdEpsilon, double& dTdDelta, double& dTdIncl);
 
     // it is necessary to provide the inversion method with a single model vector, therefore it is just a concatenation of all parameters
     virtual RVector response(const RVector & combined_model);
